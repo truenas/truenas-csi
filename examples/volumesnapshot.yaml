@@ -1,0 +1,28 @@
+# VolumeSnapshot example
+# Creates a point-in-time snapshot of an existing PVC
+apiVersion: snapshot.storage.k8s.io/v1
+kind: VolumeSnapshot
+metadata:
+  name: my-snapshot
+spec:
+  volumeSnapshotClassName: truenas-snapclass
+  source:
+    # Reference to the PVC to snapshot
+    persistentVolumeClaimName: my-nfs-pvc
+---
+# Example: Create a new PVC from the snapshot (clone)
+# apiVersion: v1
+# kind: PersistentVolumeClaim
+# metadata:
+#   name: my-pvc-from-snapshot
+# spec:
+#   accessModes:
+#     - ReadWriteMany
+#   storageClassName: truenas-nfs
+#   resources:
+#     requests:
+#       storage: 1Gi
+#   dataSource:
+#     name: my-snapshot
+#     kind: VolumeSnapshot
+#     apiGroup: snapshot.storage.k8s.io

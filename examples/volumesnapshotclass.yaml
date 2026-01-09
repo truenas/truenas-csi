@@ -1,0 +1,10 @@
+# VolumeSnapshotClass for TrueNAS CSI driver
+# Required before creating VolumeSnapshots
+apiVersion: snapshot.storage.k8s.io/v1
+kind: VolumeSnapshotClass
+metadata:
+  name: truenas-snapclass
+driver: csi.truenas.io
+deletionPolicy: Delete  # Delete snapshot when VolumeSnapshot is deleted
+# Alternative: Retain - keep snapshot even after VolumeSnapshot deletion
+# deletionPolicy: Retain

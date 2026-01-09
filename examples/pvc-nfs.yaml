@@ -1,0 +1,13 @@
+# NFS PersistentVolumeClaim example
+# Creates a ReadWriteMany volume that can be mounted by multiple pods
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: my-nfs-pvc
+spec:
+  accessModes:
+    - ReadWriteMany  # NFS supports multiple readers/writers
+  storageClassName: truenas-nfs
+  resources:
+    requests:
+      storage: 1Gi

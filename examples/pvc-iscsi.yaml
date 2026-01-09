@@ -1,0 +1,13 @@
+# iSCSI PersistentVolumeClaim example
+# Creates a ReadWriteOnce block volume
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: my-iscsi-pvc
+spec:
+  accessModes:
+    - ReadWriteOnce  # iSCSI supports single node access
+  storageClassName: truenas-iscsi
+  resources:
+    requests:
+      storage: 10Gi

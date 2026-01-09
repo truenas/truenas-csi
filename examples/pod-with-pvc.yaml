@@ -1,0 +1,23 @@
+# Example Pod using a PersistentVolumeClaim
+apiVersion: v1
+kind: Pod
+metadata:
+  name: app-with-storage
+spec:
+  containers:
+    - name: app
+      image: nginx:latest
+      volumeMounts:
+        - name: data
+          mountPath: /data
+      # Example: write test data
+      command:
+        - /bin/sh
+        - -c
+        - |
+          echo "Hello from TrueNAS CSI!" > /data/test.txt
+          nginx -g 'daemon off;'
+  volumes:
+    - name: data
+      persistentVolumeClaim:
+        claimName: my-nfs-pvc  # Reference the PVC created above

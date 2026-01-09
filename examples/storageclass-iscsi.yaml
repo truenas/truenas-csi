@@ -1,0 +1,19 @@
+# Basic iSCSI StorageClass
+# Creates ReadWriteOnce block volumes backed by ZVOLs on TrueNAS
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: truenas-iscsi
+provisioner: csi.truenas.io
+parameters:
+  # Storage protocol: nfs or iscsi
+  protocol: "iscsi"
+  # ZFS compression
+  compression: "LZ4"
+  # ZVOL block size: 512, 1K, 2K, 4K, 8K, 16K, 32K, 64K, 128K
+  volblocksize: "16K"
+  # iSCSI logical block size: 512, 1024, 2048, 4096
+  iscsi.blocksize: "4096"
+reclaimPolicy: Delete
+volumeBindingMode: Immediate
+allowVolumeExpansion: true

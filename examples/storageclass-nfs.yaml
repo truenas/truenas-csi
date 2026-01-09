@@ -1,0 +1,15 @@
+# Basic NFS StorageClass
+# Creates ReadWriteMany volumes backed by NFS shares on TrueNAS
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: truenas-nfs
+provisioner: csi.truenas.io
+parameters:
+  # Storage protocol: nfs or iscsi
+  protocol: "nfs"
+  # ZFS compression (optional): OFF, LZ4, GZIP, ZSTD, ZLE, LZJB
+  compression: "LZ4"
+reclaimPolicy: Delete
+volumeBindingMode: Immediate
+allowVolumeExpansion: true

@@ -1,0 +1,17 @@
+# NFS StorageClass with ZSTD compression and custom mount options
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: truenas-nfs-zstd
+provisioner: csi.truenas.io
+parameters:
+  protocol: "nfs"
+  # ZSTD provides excellent compression ratio with good performance
+  compression: "ZSTD"
+  # ZFS sync mode: STANDARD, ALWAYS, DISABLED
+  sync: "STANDARD"
+  # Custom NFS mount options passed to clients
+  nfs.mountOptions: "hard,nfsvers=4.1"
+reclaimPolicy: Delete
+volumeBindingMode: Immediate
+allowVolumeExpansion: true

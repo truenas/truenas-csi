@@ -1,0 +1,23 @@
+# Encrypted StorageClass
+# Creates volumes with ZFS native encryption enabled
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: truenas-nfs-encrypted
+provisioner: csi.truenas.io
+parameters:
+  protocol: "nfs"
+  compression: "LZ4"
+  # Enable ZFS encryption
+  encryption: "true"
+  # Auto-generate encryption key (recommended for most use cases)
+  encryption.generateKey: "true"
+  # Alternative: Use a passphrase (min 8 characters)
+  # encryption.passphrase: "my-secure-passphrase"
+  # Alternative: Provide a hex-encoded key (64 characters)
+  # encryption.key: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+  # Encryption algorithm (optional): AES-256-GCM (default), AES-128-CCM
+  # encryption.algorithm: "AES-256-GCM"
+reclaimPolicy: Delete
+volumeBindingMode: Immediate
+allowVolumeExpansion: true
