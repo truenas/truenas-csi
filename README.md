@@ -1,6 +1,6 @@
 # TrueNAS CSI Driver
 
-A Container Storage Interface (CSI) driver for [TrueNAS SCALE](https://www.truenas.com/truenas-scale/), enabling dynamic provisioning of persistent volumes in Kubernetes using TrueNAS storage.
+A Container Storage Interface (CSI) driver for [TrueNAS 25.10.0+](https://www.truenas.com/truenas-scale/), enabling dynamic provisioning of persistent volumes in Kubernetes using TrueNAS storage.
 
 ## Features
 
