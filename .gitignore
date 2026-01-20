@@ -33,3 +33,6 @@ go.work.sum
 
 # Deploy files
 test-deploy.yaml
+
+#Design Plan
+truenas-csi-plan.md
