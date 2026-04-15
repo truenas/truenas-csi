@@ -60,6 +60,12 @@ const (
 	// ZFS dataset types
 	datasetTypeFilesystem = "FILESYSTEM"
 	datasetTypeVolume     = "VOLUME"
+
+	// StorageClass parameter keys
+	paramProtocol     = "protocol"
+    paramPool         = "pool"
+    paramDatasetPath  = "datasetPath" // <-- ADD THIS LINE
+    paramCompression  = "compression"
 )
 
 // StorageClass parameter keys
@@ -282,12 +288,20 @@ func (s *ControllerServer) CreateVolume(ctx context.Context, req *csi.CreateVolu
 		return nil, status.Errorf(codes.InvalidArgument, "invalid storage class parameters: %v", err)
 	}
 
-	protocol := s.driver.GetProtocolFromParameters(parameters)
-	pool := s.driver.GetPoolFromParameters(parameters)
+    protocol := s.driver.GetProtocolFromParameters(parameters)
+    pool := s.driver.GetPoolFromParameters(parameters)
+    volumeName := SanitizeVolumeName(req.Name)
+    volumeID := s.driver.GenerateVolumeID(pool, volumeName)
 
-	volumeName := SanitizeVolumeName(req.Name)
-	volumeID := s.driver.GenerateVolumeID(pool, volumeName)
-	datasetPath := pool + "/" + volumeName
+    // Use custom dataset path if provided in parameters
+    datasetPath := pool + "/" + volumeName
+    if dsPath, ok := parameters[paramDatasetPath]; ok {
+    // If explicit dataset path is given, use it instead of constructing from pool/name
+    datasetPath = strings.TrimSuffix(dsPath, "/") + "/" + volumeName
+    }
+
+// Store the custom path in VolumeContext for later reconstruction
+parameters[paramDatasetPath] = dsPath
 
 	existingDataset, err := s.driver.Client().GetDataset(ctx, datasetPath)
 	if err == nil && existingDataset != nil {

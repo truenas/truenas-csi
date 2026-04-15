@@ -73,6 +73,15 @@ const (
 	PublishContextNFSPath      = "nfsPath"
 	PublishContextCHAPUser     = "chapUser"
 	PublishContextCHAPSecret   = "chapSecret"
+
+	// StorageClass parameter keys
+    paramPool           			= "pool"
+    paramDatasetPath    			= "datasetPath"
+    paramISCSIIQNBase   			= "iscsi.iqn.base"
+    paramISCSIIQNPrefix 			= "iscsi.iqn.prefix"
+    paramForceDelete    			= "forceDelete"
+    paramDeleteExtentsWithTarget 	= "deleteExtentsWithTarget"
+    paramProtocol       			= "protocol" 
 )
 
 // VolumeInfo holds metadata about a provisioned volume
@@ -783,10 +792,32 @@ func (d *Driver) GetProtocolFromParameters(parameters map[string]string) string 
 
 // GetPoolFromParameters extracts the pool from StorageClass parameters
 func (d *Driver) GetPoolFromParameters(parameters map[string]string) string {
-	if pool, ok := parameters[paramPool]; ok {
-		return pool
-	}
-	return d.defaultPool
+    // First check for explicit dataset path parameter
+    if datasetPath, ok := parameters[paramDatasetPath]; ok {
+        // Extract pool name from dataset path format: "pool/dataset" or just "pool"
+        parts := strings.SplitN(datasetPath, "/", 2)
+        return parts[0]
+    }
+
+    // Then check for explicit pool parameter
+    if pool, ok := parameters[paramPool]; ok {
+        return pool
+    }
+
+    // Fall back to default pool
+    return d.defaultPool
+}
+
+// GetDatasetPathFromParameters extracts the dataset path from StorageClass parameters
+func (d *Driver) GetDatasetPathFromParameters(parameters map[string]string, volumeName string) string {
+    // Check for explicit dataset path parameter first
+    if datasetPath, ok := parameters[paramDatasetPath]; ok {
+        return datasetPath + "/" + volumeName
+    }
+
+    // Otherwise construct from pool and name
+    pool := d.GetPoolFromParameters(parameters)
+    return pool + "/" + volumeName
 }
 
 // GetISCSIIQNBaseFromParameters extracts the IQN base from StorageClass parameters
@@ -865,27 +896,34 @@ func (d *Driver) GetVolumeInfoWithContext(ctx context.Context, volumeID string) 
 
 // reconstructVolumeFromTrueNAS queries TrueNAS to rebuild volume metadata.
 func (d *Driver) reconstructVolumeFromTrueNAS(ctx context.Context, volumeID string) (*VolumeInfo, error) {
-	pool, datasetName, err := d.ParseVolumeID(volumeID)
-	if err != nil {
-		return nil, fmt.Errorf("invalid volume ID %s: %w", volumeID, err)
-	}
+    pool, name, err := d.ParseVolumeID(volumeID)
+    if err != nil {
+        return nil, fmt.Errorf("invalid volume ID %s: %w", volumeID, err)
+    }
 
-	datasetPath := pool + "/" + datasetName
+    // Default dataset path construction
+    datasetPath := pool + "/" + name
 
-	// Query TrueNAS for the dataset
-	dataset, err := d.client.GetDataset(ctx, datasetPath)
-	if err != nil {
-		return nil, fmt.Errorf("volume %s not found in TrueNAS: %w", volumeID, err)
-	}
+    // Check VolumeContext for custom dataset path override (set during CreateVolume)
+    if volCtx, ok := d.GetVolumeInfoWithContext(ctx, volumeID); ok {
+        if ctxDatasetPath, exists := volCtx.VolumeContext[paramDatasetPath]; exists {
+            datasetPath = strings.TrimSuffix(ctxDatasetPath, "/") + "/" + name
+        }
+    }
 
-	// Reconstruct volume info based on dataset type
-	volInfo := &VolumeInfo{
-		ID:            volumeID,
-		Name:          volumeID,
-		DatasetPath:   datasetPath,
-		PoolName:      pool,
-		VolumeContext: make(map[string]string),
-	}
+    // Query TrueNAS for the dataset using the custom path
+    dataset, err := d.client.GetDataset(ctx, datasetPath)
+    if err != nil {
+        return nil, fmt.Errorf("volume %s not found in TrueNAS: %w", volumeID, err)
+    }
+
+    volInfo := &VolumeInfo{
+        ID:            volumeID,
+        Name:          name,
+        DatasetPath:   datasetPath, // Use custom path if available
+        PoolName:      pool,
+        VolumeContext: make(map[string]string),
+    }
 
 	// Determine protocol and capacity based on dataset type
 	if dataset.Type == datasetTypeVolume {
