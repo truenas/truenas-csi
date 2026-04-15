@@ -60,6 +60,67 @@ func TestCreateDataset_ZVOL(t *testing.T) {
 	assertEqual(t, dataset.Volsize, int64(1073741824))
 }
 
+func TestCreateDataset_SparseZVOL(t *testing.T) {
+	mock := NewMockTrueNASServer()
+	defer mock.Close()
+
+	mock.SetResponse(methodDatasetCreate, MockResponse{
+		Result: MockZVOL("tank/sparse-vol", "sparse-vol", "tank", 1073741824),
+	})
+
+	client := connectTestClient(t, mock)
+
+	sparse := true
+	opts := &DatasetCreateOptions{
+		Name:    "tank/sparse-vol",
+		Type:    "VOLUME",
+		Volsize: 1073741824,
+		Sparse:  &sparse,
+	}
+	dataset, err := client.CreateDataset(testContext(t), opts)
+
+	assertNoError(t, err)
+	assertNotNil(t, dataset)
+	assertEqual(t, dataset.Type, "VOLUME")
+	assertEqual(t, dataset.Volsize, int64(1073741824))
+
+	requests := mock.GetRequestsByMethod(methodDatasetCreate)
+	assertLen(t, requests, 1)
+	var params []any
+	json.Unmarshal(requests[0].Params, &params)
+	createOpts := params[0].(map[string]any)
+	assertTrue(t, createOpts["sparse"].(bool))
+}
+
+func TestCreateDataset_ThickZVOL_NoSparseField(t *testing.T) {
+	mock := NewMockTrueNASServer()
+	defer mock.Close()
+
+	mock.SetResponse(methodDatasetCreate, MockResponse{
+		Result: MockZVOL("tank/thick-vol", "thick-vol", "tank", 1073741824),
+	})
+
+	client := connectTestClient(t, mock)
+
+	opts := &DatasetCreateOptions{
+		Name:    "tank/thick-vol",
+		Type:    "VOLUME",
+		Volsize: 1073741824,
+	}
+	dataset, err := client.CreateDataset(testContext(t), opts)
+
+	assertNoError(t, err)
+	assertNotNil(t, dataset)
+
+	requests := mock.GetRequestsByMethod(methodDatasetCreate)
+	assertLen(t, requests, 1)
+	var params []any
+	json.Unmarshal(requests[0].Params, &params)
+	createOpts := params[0].(map[string]any)
+	_, hasSparse := createOpts["sparse"]
+	assertFalse(t, hasSparse)
+}
+
 func TestCreateDataset_WithEncryption(t *testing.T) {
 	mock := NewMockTrueNASServer()
 	defer mock.Close()
@@ -1213,6 +1274,30 @@ func TestDatasetCreateOptions_JSONEncoding(t *testing.T) {
 	// Should NOT have encryption (false)
 	_, hasEncryption := decoded["encryption"]
 	assertFalse(t, hasEncryption)
+
+	// Sparse nil pointer should be omitted
+	_, hasSparse := decoded["sparse"]
+	assertFalse(t, hasSparse)
+}
+
+func TestDatasetCreateOptions_JSONEncoding_WithSparse(t *testing.T) {
+	sparse := true
+	opts := &DatasetCreateOptions{
+		Name:    "tank/sparse",
+		Type:    "VOLUME",
+		Volsize: 1073741824,
+		Sparse:  &sparse,
+	}
+
+	data, err := json.Marshal(opts)
+	assertNoError(t, err)
+
+	var decoded map[string]any
+	json.Unmarshal(data, &decoded)
+
+	sparseVal, hasSparse := decoded["sparse"]
+	assertTrue(t, hasSparse)
+	assertTrue(t, sparseVal.(bool))
 }
 
 func TestZFSProperty_GetInt64(t *testing.T) {

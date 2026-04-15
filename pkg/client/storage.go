@@ -109,6 +109,7 @@ type DatasetCreateOptions struct {
 	RecordSize      string         `json:"recordsize,omitempty"`
 	Volsize         int64          `json:"volsize,omitempty"` // For ZVOLs
 	Volblocksize    string         `json:"volblocksize,omitempty"`
+	Sparse          *bool          `json:"sparse,omitempty"` // Thin provisioning for ZVOLs
 	Comments        string         `json:"comments,omitempty"`
 	CreateAncestors bool           `json:"create_ancestors,omitempty"`
 	Properties      map[string]any `json:"properties,omitempty"`

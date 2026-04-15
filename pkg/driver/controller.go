@@ -69,6 +69,7 @@ const (
 	paramCompression  = "compression"
 	paramSync         = "sync"
 	paramVolBlockSize = "volblocksize"
+	paramSparse       = "sparse"
 
 	// iSCSI parameters
 	paramISCSIBlockSize  = "iscsi.blocksize"
@@ -220,6 +221,14 @@ func (s *ControllerServer) validateStorageClassParameters(ctx context.Context, p
 		}
 		if _, valid := ValidISCSIBlockSizes[bs]; !valid {
 			return fmt.Errorf("invalid iscsi.blocksize: %s (valid: 512, 1024, 2048, 4096)", val)
+		}
+	}
+
+	// Validate sparse (must be "true" or "false")
+	if val, ok := parameters[paramSparse]; ok {
+		lower := strings.ToLower(val)
+		if lower != "true" && lower != "false" {
+			return fmt.Errorf("invalid sparse value: %s (valid: true, false)", val)
 		}
 	}
 
@@ -648,6 +657,12 @@ func (s *ControllerServer) createISCSIVolume(ctx context.Context, volumeID, data
 		Properties:   make(map[string]any),
 	}
 
+	if val, ok := parameters[paramSparse]; ok && strings.EqualFold(val, "true") {
+		sparse := true
+		datasetOpts.Sparse = &sparse
+		s.driver.Log().V(LogLevelDebug).Info("Enabling sparse (thin) provisioning for ZVOL", "dataset", datasetPath)
+	}
+
 	for key, value := range parameters {
 		if propName, found := strings.CutPrefix(key, "zfs."); found {
 			datasetOpts.Properties[propName] = value
@@ -889,7 +904,13 @@ func (s *ControllerServer) createVolumeFromSource(ctx context.Context, req *csi.
 			updateOpts := &client.DatasetUpdateOptions{}
 			if protocol == ProtocolISCSI {
 				updateOpts.Volsize = &requiredBytes
-				updateOpts.RefReservation = &requiredBytes
+				clonedDs, err := s.driver.Client().GetDataset(ctx, datasetPath)
+				if err != nil {
+					return nil, status.Errorf(codes.Internal, "failed to query cloned dataset for sparse detection: %v", err)
+				}
+				if clonedDs.RefReservation > 0 {
+					updateOpts.RefReservation = &requiredBytes
+				}
 			} else {
 				updateOpts.RefQuota = &requiredBytes
 			}
@@ -966,7 +987,13 @@ func (s *ControllerServer) createVolumeFromSource(ctx context.Context, req *csi.
 			updateOpts := &client.DatasetUpdateOptions{}
 			if protocol == ProtocolISCSI {
 				updateOpts.Volsize = &requiredBytes
-				updateOpts.RefReservation = &requiredBytes
+				clonedDs, err := s.driver.Client().GetDataset(ctx, datasetPath)
+				if err != nil {
+					return nil, status.Errorf(codes.Internal, "failed to query cloned dataset for sparse detection: %v", err)
+				}
+				if clonedDs.RefReservation > 0 {
+					updateOpts.RefReservation = &requiredBytes
+				}
 			} else {
 				updateOpts.RefQuota = &requiredBytes
 			}
@@ -1799,7 +1826,15 @@ func (s *ControllerServer) ControllerExpandVolume(ctx context.Context, req *csi.
 	updates := &client.DatasetUpdateOptions{}
 	if volInfo.Protocol == ProtocolISCSI {
 		updates.Volsize = &newSize
-		updates.RefReservation = &newSize // Must update reservation to match volsize
+
+		dataset, err := s.driver.Client().GetDataset(ctx, volInfo.DatasetPath)
+		if err != nil {
+			return nil, status.Errorf(codes.Internal, "failed to query dataset for sparse detection: %v", err)
+		}
+		// Sparse (thin) zvols have refreservation == 0; only update reservation for thick zvols
+		if dataset.RefReservation > 0 {
+			updates.RefReservation = &newSize
+		}
 	} else {
 		updates.RefQuota = &newSize
 	}
