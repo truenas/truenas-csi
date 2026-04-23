@@ -257,7 +257,9 @@ type DriverConfig struct {
 // It validates the configuration, establishes a connection to TrueNAS,
 // and initializes the controller and node services.
 func NewDriver(config *DriverConfig) (*Driver, error) {
-	config.DriverName = DRIVER_NAME
+	if config.DriverName == "" {
+		config.DriverName = DRIVER_NAME
+	}
 
 	config.DriverVersion = DRIVER_VERSION
 

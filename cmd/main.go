@@ -99,6 +99,14 @@ func validateFlags() error {
 }
 
 func loadEnvConfig(config *driver.DriverConfig) error {
+	// Optional: override the CSI driver name (default: csi.truenas.io).
+	// Allows running multiple truenas-csi instances in a single cluster,
+	// each pointing at a different TrueNAS appliance, by giving each a
+	// unique CSIDriver name (e.g. "tenant-a.csi.truenas.io"). The kubelet
+	// socket path and CSIDriver CR name in the deployment manifests must
+	// match the value set here.
+	config.DriverName = os.Getenv("CSI_DRIVER_NAME")
+
 	if val := os.Getenv("TRUENAS_URL"); val == "" {
 		return fmt.Errorf("TRUENAS_URL is missing")
 	} else {
