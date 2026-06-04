@@ -6,6 +6,7 @@ A Container Storage Interface (CSI) driver for [TrueNAS 25.10.0+](https://www.tr
 
 - **NFS volumes** - ReadWriteMany (RWX) access mode for shared storage
 - **iSCSI volumes** - Block storage with ReadWriteOnce (RWO) and ReadWriteMany (RWX) access modes (RWX requires cluster filesystem like GFS2/OCFS2)
+- **NVMe-oF/TCP volumes** - Block storage over NVMe over Fabrics (TCP) with optional DH-CHAP authentication
 - **Dynamic provisioning** - Automatic volume creation and deletion
 - **Volume expansion** - Online resize of volumes
 - **Snapshots and clones** - CSI snapshot support for backup and cloning
@@ -29,6 +30,7 @@ A Container Storage Interface (CSI) driver for [TrueNAS 25.10.0+](https://www.tr
 ### Node Requirements
 - **NFS volumes**: No additional requirements
 - **iSCSI volumes**: `open-iscsi` package installed on worker nodes
+- **NVMe-oF volumes**: `nvme_tcp`/`nvme_fabrics` kernel modules available on worker nodes (the node DaemonSet loads them); requires TrueNAS SCALE 25.10+ with the NVMe-oF target service enabled
 
 ## Quick Start
 
@@ -143,6 +145,7 @@ sudo systemctl enable microk8s-mount-propagation
 | `defaultPool` | Default ZFS pool for volumes | `tank` |
 | `nfsServer` | NFS server address | `10.0.0.100` |
 | `iscsiPortal` | iSCSI portal address | `10.0.0.100:3260` |
+| `nvmeofPortal` | NVMe-oF portal address (optional; auto-derived) | `10.0.0.100:4420` |
 | `iscsiIQNBase` | Base IQN for iSCSI targets | `iqn.2024-01.com.example` |
 
 ### StorageClass Parameters
@@ -151,7 +154,7 @@ sudo systemctl enable microk8s-mount-propagation
 
 | Parameter | Description | Values |
 |-----------|-------------|--------|
-| `protocol` | Storage protocol | `nfs`, `iscsi` |
+| `protocol` | Storage protocol | `nfs`, `iscsi`, `nvmeof` |
 | `pool` | ZFS pool (overrides default) | pool name |
 | `compression` | ZFS compression algorithm | `OFF`, `LZ4`, `GZIP`, `ZSTD`, `ZLE`, `LZJB` |
 | `sync` | ZFS sync mode | `STANDARD`, `ALWAYS`, `DISABLED` |
@@ -178,6 +181,18 @@ sudo systemctl enable microk8s-mount-propagation
 | `iscsi.chapPeerSecret` | Mutual CHAP peer password | string |
 | `iscsi.initiators` | Allowed initiator IQNs | comma-separated |
 | `iscsi.networks` | Allowed network CIDRs | comma-separated |
+
+#### NVMe-oF Parameters
+
+NVMe-oF also uses the `volblocksize` parameter above. DH-CHAP authentication is optional.
+
+| Parameter | Description | Values |
+|-----------|-------------|--------|
+| `nvmeof.hostNQN` | Authorized host NQN (required for DH-CHAP) | `nqn.2014-08.org.nvmexpress:uuid:...` |
+| `nvmeof.dhchapKey` | DH-CHAP host key | `DHHC-1:00:...` |
+| `nvmeof.dhchapCtrlKey` | Mutual DH-CHAP controller key | `DHHC-1:00:...` |
+| `nvmeof.dhchapHash` | DH-CHAP hash (default `SHA-256`) | `SHA-256`, `SHA-384`, `SHA-512` |
+| `nvmeof.dhchapDHGroup` | DH group | `2048-BIT`, `3072-BIT`, `4096-BIT`, `6144-BIT`, `8192-BIT` |
 
 #### Snapshot Task Parameters
 
@@ -207,8 +222,10 @@ See the [`examples/`](examples/) folder for sample configurations:
 - `storageclass-nfs-compressed.yaml` - NFS with ZSTD compression
 - `storageclass-iscsi.yaml` - Basic iSCSI StorageClass
 - `storageclass-iscsi-chap.yaml` - iSCSI with CHAP authentication
+- `storageclass-nvmeof.yaml` - Basic NVMe-oF/TCP StorageClass
+- `storageclass-nvmeof-dhchap.yaml` - NVMe-oF with DH-CHAP authentication
 - `storageclass-encrypted.yaml` - Encrypted storage
-- `pvc-nfs.yaml` / `pvc-iscsi.yaml` - PVC examples
+- `pvc-nfs.yaml` / `pvc-iscsi.yaml` / `pvc-nvmeof.yaml` - PVC examples
 - `pod-with-pvc.yaml` - Pod using a PVC
 - `volumesnapshotclass.yaml` / `volumesnapshot.yaml` - Snapshot examples
 
