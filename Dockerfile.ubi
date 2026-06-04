@@ -24,9 +24,17 @@ FROM quay.io/centos/centos:stream10 AS packages
 RUN dnf install -y --setopt=install_weak_deps=False \
     nfs-utils \
     iscsi-initiator-utils \
+    nvme-cli \
     e2fsprogs \
     xfsprogs \
     && dnf clean all
+
+# Stage the nvme binary and its non-core shared libraries (all live in /usr/lib64:
+# libnvme, libjson-c, and the crypto libs DH-CHAP needs) so we don't have to
+# enumerate each by hand. Core libs (/lib64 glibc, ld) are intentionally excluded.
+RUN mkdir -p /nvme-deps/usr/lib64 \
+    && cp -L /usr/sbin/nvme /nvme-deps/nvme \
+    && ldd /usr/sbin/nvme | awk '/=> \/usr\/lib64/{print $3}' | xargs -I{} cp -L {} /nvme-deps/usr/lib64/
 
 # Stage 3: Final UBI-based image for Red Hat certification
 FROM registry.access.redhat.com/ubi10/ubi-minimal:latest
@@ -37,10 +45,10 @@ LABEL name="truenas-csi" \
       version="1.0.0" \
       release="1" \
       summary="TrueNAS CSI Driver for Kubernetes/OpenShift" \
-      description="Container Storage Interface driver for TrueNAS storage systems. Supports NFS and iSCSI protocols with snapshots, clones, and volume expansion." \
+      description="Container Storage Interface driver for TrueNAS storage systems. Supports NFS, iSCSI, and NVMe-oF protocols with snapshots, clones, and volume expansion." \
       io.k8s.display-name="TrueNAS CSI Driver" \
       io.k8s.description="CSI driver for dynamic provisioning of persistent volumes on TrueNAS storage" \
-      io.openshift.tags="storage,csi,truenas,nfs,iscsi" \
+      io.openshift.tags="storage,csi,truenas,nfs,iscsi,nvme-of" \
       com.redhat.component="truenas-csi-container" \
       maintainer="TrueNAS <support@truenas.com>"
 
@@ -82,6 +90,10 @@ COPY --from=packages /usr/lib64/libe2p.so* /usr/lib64/
 COPY --from=packages /usr/lib64/libinih.so* /usr/lib64/
 COPY --from=packages /usr/lib64/liburcu.so* /usr/lib64/
 COPY --from=packages /usr/lib64/liburcu-common.so* /usr/lib64/
+
+# Copy nvme-cli (NVMe-oF) and its shared libraries from the packages stage
+COPY --from=packages /nvme-deps/nvme /usr/sbin/nvme
+COPY --from=packages /nvme-deps/usr/lib64/ /usr/lib64/
 
 # Copy license file (required for certification)
 COPY LICENSE /licenses/LICENSE
