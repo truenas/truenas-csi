@@ -134,6 +134,10 @@ func loadEnvConfig(config *driver.DriverConfig) error {
 		config.ISCSIPortal = val
 	}
 
+	if val := os.Getenv("TRUENAS_NVMEOF_PORTAL"); val != "" {
+		config.NVMeOFPortal = val
+	}
+
 	if val := os.Getenv("TRUENAS_ISCSI_IQN_BASE"); val != "" {
 		config.ISCSIIQNBase = val
 	}

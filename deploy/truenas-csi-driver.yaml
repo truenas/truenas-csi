@@ -162,6 +162,7 @@ data:
   defaultPool: "tank"
   nfsServer: "YOUR-TRUENAS-IP"
   iscsiPortal: "YOUR-TRUENAS-IP:3260"
+  nvmeofPortal: "YOUR-TRUENAS-IP:4420"  # Optional: NVMe-oF portal; auto-derived from truenasURL host if omitted
   iscsiIQNBase: "iqn.2000-01.io.truenas"  # Optional: Custom IQN prefix (default: iqn.2000-01.io.truenas)
 
 ---
@@ -221,6 +222,12 @@ spec:
                 configMapKeyRef:
                   name: truenas-csi-config
                   key: iscsiPortal
+            - name: TRUENAS_NVMEOF_PORTAL
+              valueFrom:
+                configMapKeyRef:
+                  name: truenas-csi-config
+                  key: nvmeofPortal
+                  optional: true
             - name: TRUENAS_ISCSI_IQN_BASE
               valueFrom:
                 configMapKeyRef:
@@ -401,6 +408,12 @@ spec:
                 configMapKeyRef:
                   name: truenas-csi-config
                   key: iscsiPortal
+            - name: TRUENAS_NVMEOF_PORTAL
+              valueFrom:
+                configMapKeyRef:
+                  name: truenas-csi-config
+                  key: nvmeofPortal
+                  optional: true
             - name: TRUENAS_ISCSI_IQN_BASE
               valueFrom:
                 configMapKeyRef:

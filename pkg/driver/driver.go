@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -30,8 +31,9 @@ const (
 	DEFAULT_IQN_BASE = "iqn.2000-01.io.truenas"
 
 	// Protocol identifiers
-	ProtocolISCSI = "iscsi"
-	ProtocolNFS   = "nfs"
+	ProtocolISCSI  = "iscsi"
+	ProtocolNFS    = "nfs"
+	ProtocolNVMeOF = "nvmeof"
 
 	// Compression defaults
 	CompressionLZ4 = "LZ4"
@@ -75,6 +77,14 @@ const (
 	PublishContextNFSPath      = "nfsPath"
 	PublishContextCHAPUser     = "chapUser"
 	PublishContextCHAPSecret   = "chapSecret"
+
+	// NVMe-oF publish context keys. DH-CHAP credentials are NOT carried here;
+	// they ride the volume context (StorageClass parameters), like iSCSI CHAP.
+	PublishContextNVMeSubNQN     = "nvmeSubNQN"
+	PublishContextNVMePortAddr   = "nvmePortAddr"
+	PublishContextNVMePortSvcID  = "nvmePortSvcID"
+	PublishContextNVMeTransport  = "nvmeTransport"
+	PublishContextNVMeNSUUID     = "nvmeNamespaceUUID"
 )
 
 // VolumeInfo holds metadata about a provisioned volume
@@ -88,7 +98,7 @@ type VolumeInfo struct {
 
 	DatasetPath string
 	PoolName    string
-	Protocol    string // "nfs" or "iscsi"
+	Protocol    string // "nfs", "iscsi", or "nvmeof"
 
 	NFSPath    string
 	NFSShareID int
@@ -100,6 +110,15 @@ type VolumeInfo struct {
 	ISCSIExtentID    int
 	ISCSIAuthID      int // CHAP auth credential ID
 	ISCSIInitiatorID int // Initiator group ID
+
+	// NVMe-oF resource IDs and identifiers
+	NVMeSubNQN        string // generated subsystem NQN (read back from TrueNAS)
+	NVMeNamespaceUUID string // server-generated namespace UUID (for by-id node discovery)
+	NVMeSubsysID      int
+	NVMeNamespaceID   int
+	NVMePortID        int
+	NVMeHostID        int // shared per hostNQN; 0 when no DH-CHAP
+	NVMeHostSubsysID  int
 }
 
 // ISCSIDeleteOptions holds parsed delete options from StorageClass parameters.
@@ -199,6 +218,12 @@ type Driver struct {
 	iscsiPortalID  int
 	iscsiIQNBase   string
 
+	// NVMe-oF portal (host:port for the NVMe/TCP listener) and the resolved
+	// shared port ID. nvmeBaseNQN is TrueNAS's global base NQN (informational).
+	nvmeofPortal  string
+	nvmeofPortID  int
+	nvmeBaseNQN   string
+
 	identityServer   csi.IdentityServer
 	controllerServer csi.ControllerServer
 	nodeServer       csi.NodeServer
@@ -247,6 +272,7 @@ type DriverConfig struct {
 	NFSServer    string
 	ISCSIPortal  string
 	ISCSIIQNBase string
+	NVMeOFPortal string
 
 	// Logger is the structured logger for the driver and client.
 	// If not set, logging for the client will be disabled.
@@ -315,6 +341,17 @@ func NewDriver(config *DriverConfig) (*Driver, error) {
 		}
 	}
 
+	// Derive NVMe-oF portal from TrueNAS URL if not explicitly set (default port 4420)
+	if config.NVMeOFPortal == "" {
+		if parsedURL, err := url.Parse(config.TrueNASURL); err == nil {
+			host := parsedURL.Hostname()
+			if host != "" {
+				config.NVMeOFPortal = fmt.Sprintf("%s:%d", host, client.NVMeDefaultPort)
+				log.V(LogLevelInfo).Info("Derived NVMe-oF portal from TrueNAS URL", "nvmeofPortal", config.NVMeOFPortal)
+			}
+		}
+	}
+
 	ctx := context.Background()
 
 	cfg := client.Config{
@@ -362,6 +399,29 @@ func NewDriver(config *DriverConfig) (*Driver, error) {
 		}
 	}
 
+	// Resolve-or-create the shared NVMe-oF TCP port and cache the global base NQN.
+	// Done once at startup (like the iSCSI portal) to avoid a create race between
+	// concurrent CreateVolume calls. Failures are non-fatal: the port is resolved
+	// lazily on first use (NVMeOFPortID) if NVMe-oF volumes are requested.
+	var nvmeofPortID int
+	if config.NVMeOFPortal != "" {
+		portalHost, portalPort := splitNVMeOFPortal(config.NVMeOFPortal)
+		if port, err := resolveOrCreateNVMePort(ctx, truenasClient, portalHost, portalPort); err != nil {
+			log.V(LogLevelInfo).Info("Failed to resolve/create NVMe-oF port, will retry on first use", "portal", config.NVMeOFPortal, "error", err)
+		} else {
+			nvmeofPortID = port.ID
+			log.V(LogLevelInfo).Info("Resolved NVMe-oF port ID", "portal", config.NVMeOFPortal, "portID", nvmeofPortID)
+		}
+	}
+
+	var nvmeBaseNQN string
+	if gc, err := truenasClient.GetNVMeGlobalConfig(ctx); err != nil {
+		log.V(LogLevelInfo).Info("Failed to read nvmet global config", "error", err)
+	} else {
+		nvmeBaseNQN = gc.BaseNQN
+		log.V(LogLevelInfo).Info("Read nvmet base NQN", "baseNQN", nvmeBaseNQN)
+	}
+
 	// Default to "all" mode if not specified
 	mode := config.Mode
 	if mode == "" {
@@ -382,6 +442,9 @@ func NewDriver(config *DriverConfig) (*Driver, error) {
 		iscsiPortal:   config.ISCSIPortal,
 		iscsiPortalID: iscsiPortalID,
 		iscsiIQNBase:  config.ISCSIIQNBase,
+		nvmeofPortal:  config.NVMeOFPortal,
+		nvmeofPortID:  nvmeofPortID,
+		nvmeBaseNQN:   nvmeBaseNQN,
 	}
 
 	d.initializeCapabilities()
@@ -788,6 +851,74 @@ func (d *Driver) ISCSIPortalID(ctx context.Context) (int, error) {
 	return d.iscsiPortalID, nil
 }
 
+// NVMeOFPortal returns the configured NVMe-oF portal address (host:port).
+func (d *Driver) NVMeOFPortal() string {
+	return d.nvmeofPortal
+}
+
+// NVMeOFPortAddr returns the listen address (host) of the NVMe-oF portal.
+func (d *Driver) NVMeOFPortAddr() string {
+	host, _ := splitNVMeOFPortal(d.nvmeofPortal)
+	return host
+}
+
+// NVMeOFPortSvcID returns the service port of the NVMe-oF portal (e.g. 4420).
+func (d *Driver) NVMeOFPortSvcID() int {
+	_, port := splitNVMeOFPortal(d.nvmeofPortal)
+	return port
+}
+
+// NVMeOFPortID returns the resolved TrueNAS nvmet port ID for the shared NVMe/TCP
+// listener. If it was not resolved at startup, it resolves-or-creates it lazily.
+func (d *Driver) NVMeOFPortID(ctx context.Context) (int, error) {
+	if d.nvmeofPortID > 0 {
+		return d.nvmeofPortID, nil
+	}
+	if d.nvmeofPortal == "" {
+		return 0, fmt.Errorf("NVMe-oF portal is not configured (set TRUENAS_NVMEOF_PORTAL)")
+	}
+
+	host, port := splitNVMeOFPortal(d.nvmeofPortal)
+	created, err := resolveOrCreateNVMePort(ctx, d.client, host, port)
+	if err != nil {
+		return 0, err
+	}
+	d.nvmeofPortID = created.ID
+	d.log.V(LogLevelInfo).Info("Resolved NVMe-oF port ID", "portal", d.nvmeofPortal, "portID", d.nvmeofPortID)
+	return d.nvmeofPortID, nil
+}
+
+// splitNVMeOFPortal splits a "host:port" portal into host and numeric port,
+// defaulting the port to the standard NVMe/TCP port when absent or unparseable.
+func splitNVMeOFPortal(portal string) (string, int) {
+	host, portStr, err := net.SplitHostPort(portal)
+	if err != nil {
+		return portal, client.NVMeDefaultPort
+	}
+	port, err := strconv.Atoi(portStr)
+	if err != nil {
+		return host, client.NVMeDefaultPort
+	}
+	return host, port
+}
+
+// resolveOrCreateNVMePort finds the existing TCP port for addr or creates one,
+// making the shared-port setup idempotent.
+func resolveOrCreateNVMePort(ctx context.Context, c *client.Client, addr string, svcID int) (*client.NVMePort, error) {
+	port, err := c.GetNVMePortByAddr(ctx, addr)
+	if err == nil {
+		return port, nil
+	}
+	if !client.IsNotFoundError(err) {
+		return nil, fmt.Errorf("failed to query NVMe-oF port: %w", err)
+	}
+	created, err := c.CreateNVMePort(ctx, addr, svcID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create NVMe-oF port: %w", err)
+	}
+	return created, nil
+}
+
 // DefaultPool returns the default storage pool
 func (d *Driver) DefaultPool() string {
 	return d.defaultPool
@@ -936,30 +1067,22 @@ func (d *Driver) reconstructVolumeFromTrueNAS(ctx context.Context, volumeID stri
 		VolumeContext: make(map[string]string),
 	}
 
-	// Determine protocol and capacity based on dataset type
+	// Determine protocol and capacity based on dataset type.
 	if dataset.Type == datasetTypeVolume {
-		volInfo.Protocol = ProtocolISCSI
 		volInfo.CapacityBytes = dataset.Volsize
 		if volInfo.CapacityBytes == 0 {
 			volInfo.CapacityBytes = dataset.Used
 		}
 
-		// Query iSCSI target details from TrueNAS
+		// A ZVOL may back an iSCSI extent or an NVMe-oF namespace. Try iSCSI first.
 		zvolPath := "zvol/" + datasetPath
-		extent, err := d.client.GetISCSIExtentByDisk(ctx, zvolPath)
-		if err == nil && extent != nil {
+		if extent, err := d.client.GetISCSIExtentByDisk(ctx, zvolPath); err == nil && extent != nil {
+			volInfo.Protocol = ProtocolISCSI
 			volInfo.ISCSIExtentID = extent.ID
-
-			// Find the target-extent association
-			assoc, err := d.client.GetISCSITargetExtentByExtent(ctx, extent.ID)
-			if err == nil && assoc != nil {
+			if assoc, err := d.client.GetISCSITargetExtentByExtent(ctx, extent.ID); err == nil && assoc != nil {
 				volInfo.LUN = assoc.LunID
-
-				// Get the target details
-				target, err := d.client.GetISCSITargetByID(ctx, assoc.Target)
-				if err == nil && target != nil {
+				if target, err := d.client.GetISCSITargetByID(ctx, assoc.Target); err == nil && target != nil {
 					volInfo.ISCSITargetID = target.ID
-					// Construct the full IQN
 					volInfo.TargetIQN = d.iscsiIQNBase + ":" + target.Name
 					volInfo.TargetPortal = d.iscsiPortal
 					volInfo.VolumeContext[PublishContextTargetPortal] = d.iscsiPortal
@@ -967,22 +1090,47 @@ func (d *Driver) reconstructVolumeFromTrueNAS(ctx context.Context, volumeID stri
 					volInfo.VolumeContext[PublishContextLUN] = fmt.Sprintf("%d", volInfo.LUN)
 				}
 			}
+			d.log.V(LogLevelDebug).Info("Reconstructed iSCSI volume", "volumeId", volumeID, "capacityBytes", volInfo.CapacityBytes,
+				"targetIQN", volInfo.TargetIQN, "lun", volInfo.LUN)
+			return volInfo, nil
 		}
-		d.log.V(LogLevelDebug).Info("Reconstructed iSCSI volume", "volumeId", volumeID, "capacityBytes", volInfo.CapacityBytes,
-			"targetIQN", volInfo.TargetIQN, "lun", volInfo.LUN)
-	} else {
-		// NFS filesystem
-		volInfo.Protocol = ProtocolNFS
-		volInfo.CapacityBytes = dataset.RefQuota
-		volInfo.NFSPath = dataset.Mountpoint
 
-		if d.nfsServer != "" {
-			volInfo.VolumeContext[PublishContextNFSServer] = d.nfsServer
+		// Otherwise try NVMe-oF.
+		if ns, err := d.client.GetNVMeNamespaceByDevice(ctx, zvolPath); err == nil && ns != nil {
+			volInfo.Protocol = ProtocolNVMeOF
+			volInfo.NVMeNamespaceID = ns.ID
+			volInfo.NVMeNamespaceUUID = ns.DeviceUUID
+			if ns.Subsys != nil {
+				volInfo.NVMeSubsysID = ns.Subsys.ID
+				volInfo.NVMeSubNQN = ns.Subsys.SubNQN
+			}
+			volInfo.VolumeContext[PublishContextNVMeSubNQN] = volInfo.NVMeSubNQN
+			volInfo.VolumeContext[PublishContextNVMePortAddr] = d.NVMeOFPortAddr()
+			volInfo.VolumeContext[PublishContextNVMePortSvcID] = fmt.Sprintf("%d", d.NVMeOFPortSvcID())
+			volInfo.VolumeContext[PublishContextNVMeTransport] = defaultNVMeOFTransport
+			volInfo.VolumeContext[PublishContextNVMeNSUUID] = ns.DeviceUUID
+			d.log.V(LogLevelDebug).Info("Reconstructed NVMe-oF volume", "volumeId", volumeID, "capacityBytes", volInfo.CapacityBytes,
+				"subNQN", volInfo.NVMeSubNQN, "nsUUID", ns.DeviceUUID)
+			return volInfo, nil
 		}
-		volInfo.VolumeContext[PublishContextNFSPath] = dataset.Mountpoint
 
-		d.log.V(LogLevelDebug).Info("Reconstructed NFS volume", "volumeId", volumeID, "capacityBytes", volInfo.CapacityBytes, "path", dataset.Mountpoint)
+		// Unknown ZVOL with no protocol resources — default to iSCSI (legacy behavior).
+		volInfo.Protocol = ProtocolISCSI
+		d.log.V(LogLevelDebug).Info("Reconstructed ZVOL with no iSCSI/NVMe resources, defaulting to iSCSI", "volumeId", volumeID)
+		return volInfo, nil
 	}
+
+	// NFS filesystem
+	volInfo.Protocol = ProtocolNFS
+	volInfo.CapacityBytes = dataset.RefQuota
+	volInfo.NFSPath = dataset.Mountpoint
+
+	if d.nfsServer != "" {
+		volInfo.VolumeContext[PublishContextNFSServer] = d.nfsServer
+	}
+	volInfo.VolumeContext[PublishContextNFSPath] = dataset.Mountpoint
+
+	d.log.V(LogLevelDebug).Info("Reconstructed NFS volume", "volumeId", volumeID, "capacityBytes", volInfo.CapacityBytes, "path", dataset.Mountpoint)
 
 	d.log.V(LogLevelInfo).Info("Successfully reconstructed volume from TrueNAS", "volumeId", volumeID)
 	return volInfo, nil

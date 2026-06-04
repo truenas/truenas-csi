@@ -86,6 +86,17 @@ const (
 	iscsiAuthTypeCHAP    = "chap"
 	iscsiAuthTypeMutual  = "CHAP_MUTUAL"
 
+	// NVMe-oF parameters. DH-CHAP credentials are plaintext StorageClass params
+	// (like iSCSI CHAP) and flow to the node via the volume context.
+	paramNVMeOFHostNQN       = "nvmeof.hostNQN"
+	paramNVMeOFDHCHAPKey     = "nvmeof.dhchapKey"
+	paramNVMeOFDHCHAPCtrlKey = "nvmeof.dhchapCtrlKey"
+	paramNVMeOFDHCHAPHash    = "nvmeof.dhchapHash"
+	paramNVMeOFDHCHAPDHGroup = "nvmeof.dhchapDHGroup"
+
+	// NVMe-oF defaults
+	defaultNVMeOFTransport = "tcp"
+
 	// Delete options
 	paramForceDelete             = "forceDelete"
 	paramDeleteExtentsWithTarget = "deleteExtentsWithTarget"
@@ -195,9 +206,14 @@ func (s *ControllerServer) validateStorageClassParameters(ctx context.Context, p
 	// Validate protocol
 	if val, ok := parameters[paramProtocol]; ok {
 		val = strings.ToLower(val)
-		if val != ProtocolNFS && val != ProtocolISCSI {
-			return fmt.Errorf("invalid protocol: %s (valid: nfs, iscsi)", val)
+		if val != ProtocolNFS && val != ProtocolISCSI && val != ProtocolNVMeOF {
+			return fmt.Errorf("invalid protocol: %s (valid: nfs, iscsi, nvmeof)", val)
 		}
+	}
+
+	// Validate NVMe-oF DH-CHAP parameters
+	if err := validateNVMeOFParameters(parameters); err != nil {
+		return err
 	}
 
 	// Validate pool exists
@@ -361,6 +377,22 @@ func (s *ControllerServer) CreateVolume(ctx context.Context, req *csi.CreateVolu
 			}, nil
 		}
 
+		// Same idempotent-repair for NVMe-oF ZVOLs.
+		if existingDataset.Type == datasetTypeVolume && protocol == ProtocolNVMeOF {
+			volCtx, err := s.ensureNVMeOFChain(ctx, volumeID, datasetPath, parameters)
+			if err != nil {
+				return nil, status.Errorf(codes.Internal, "failed to ensure NVMe-oF resources for existing volume: %v", err)
+			}
+			s.driver.Log().V(LogLevelDebug).Info("Volume already exists, returning with NVMe-oF context", "volumeId", volumeID, "capacity", returnedCapacity)
+			return &csi.CreateVolumeResponse{
+				Volume: &csi.Volume{
+					VolumeId:      volumeID,
+					CapacityBytes: returnedCapacity,
+					VolumeContext: volCtx,
+				},
+			}, nil
+		}
+
 		s.driver.Log().V(LogLevelDebug).Info("Volume already exists, returning existing volume", "volumeId", volumeID, "capacity", returnedCapacity)
 		return &csi.CreateVolumeResponse{
 			Volume: &csi.Volume{
@@ -371,9 +403,9 @@ func (s *ControllerServer) CreateVolume(ctx context.Context, req *csi.CreateVolu
 		}, nil
 	}
 
-	// Check block volume compatibility with protocol
+	// Check block volume compatibility with protocol (NFS cannot back raw block)
 	for _, cap := range req.VolumeCapabilities {
-		if cap.GetBlock() != nil && protocol != ProtocolISCSI {
+		if cap.GetBlock() != nil && protocol != ProtocolISCSI && protocol != ProtocolNVMeOF {
 			return nil, status.Error(codes.InvalidArgument, "block volume mode is not supported for NFS protocol")
 		}
 	}
@@ -383,9 +415,12 @@ func (s *ControllerServer) CreateVolume(ctx context.Context, req *csi.CreateVolu
 	}
 
 	var volInfo *VolumeInfo
-	if protocol == ProtocolISCSI {
+	switch protocol {
+	case ProtocolISCSI:
 		volInfo, err = s.createISCSIVolume(ctx, volumeID, datasetPath, requiredBytes, parameters)
-	} else {
+	case ProtocolNVMeOF:
+		volInfo, err = s.createNVMeOFVolume(ctx, volumeID, datasetPath, requiredBytes, parameters)
+	default:
 		volInfo, err = s.createNFSVolume(ctx, volumeID, datasetPath, requiredBytes, parameters)
 	}
 
@@ -563,6 +598,362 @@ func makeISCSIExtentName(volumeID string) string {
 	return volumeID
 }
 
+// maxNVMeSubsysNameLength bounds the generated subsystem name. The full subnqn
+// (basenqn + ":" + name) must stay within the NVMe 223-byte NQN limit; volume IDs
+// are short (pvc-<uuid>), so this is generous.
+const maxNVMeSubsysNameLength = 200
+
+var validNVMeOFHashes = map[string]bool{"SHA-256": true, "SHA-384": true, "SHA-512": true}
+
+var validNVMeOFDHGroups = map[string]bool{
+	"2048-BIT": true, "3072-BIT": true, "4096-BIT": true, "6144-BIT": true, "8192-BIT": true,
+}
+
+// validateNVMeOFParameters validates the NVMe-oF DH-CHAP StorageClass parameters.
+func validateNVMeOFParameters(parameters map[string]string) error {
+	hostNQN := parameters[paramNVMeOFHostNQN]
+	key := parameters[paramNVMeOFDHCHAPKey]
+	ctrlKey := parameters[paramNVMeOFDHCHAPCtrlKey]
+
+	if key != "" && hostNQN == "" {
+		return fmt.Errorf("%s is required when %s is set", paramNVMeOFHostNQN, paramNVMeOFDHCHAPKey)
+	}
+	if ctrlKey != "" && key == "" {
+		return fmt.Errorf("%s (mutual auth) requires %s", paramNVMeOFDHCHAPCtrlKey, paramNVMeOFDHCHAPKey)
+	}
+	if h, ok := parameters[paramNVMeOFDHCHAPHash]; ok && h != "" && !validNVMeOFHashes[h] {
+		return fmt.Errorf("invalid %s: %s (valid: SHA-256, SHA-384, SHA-512)", paramNVMeOFDHCHAPHash, h)
+	}
+	if g, ok := parameters[paramNVMeOFDHCHAPDHGroup]; ok && g != "" && !validNVMeOFDHGroups[g] {
+		return fmt.Errorf("invalid %s: %s (valid: 2048-BIT, 3072-BIT, 4096-BIT, 6144-BIT, 8192-BIT)", paramNVMeOFDHCHAPDHGroup, g)
+	}
+	return nil
+}
+
+// makeNVMeSubsysName creates a valid subsystem name from a volume ID. TrueNAS
+// generates the subnqn from the global basenqn plus this name, so it is sanitized
+// to NQN-safe characters.
+func makeNVMeSubsysName(volumeID string) string {
+	name := strings.ToLower("csi-" + volumeID)
+	result := make([]byte, 0, len(name))
+	for i := 0; i < len(name); i++ {
+		c := name[i]
+		if (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '.' || c == '-' {
+			result = append(result, c)
+		} else {
+			result = append(result, '-')
+		}
+	}
+	name = string(result)
+	if len(name) > maxNVMeSubsysNameLength {
+		name = name[:maxNVMeSubsysNameLength]
+	}
+	return name
+}
+
+// buildZVOLCreateOptions builds the dataset create options for a ZVOL, shared by
+// the iSCSI and NVMe-oF volume creation paths (compression, volblocksize, sparse,
+// zfs.* properties, encryption, ancestor creation).
+func (s *ControllerServer) buildZVOLCreateOptions(datasetPath string, capacityBytes int64, parameters map[string]string) *client.DatasetCreateOptions {
+	compression := CompressionLZ4
+	if val, ok := parameters[paramCompression]; ok {
+		compression = strings.ToUpper(val)
+	}
+
+	volblocksize := defaultVolBlockSize
+	if val, ok := parameters[paramVolBlockSize]; ok {
+		volblocksize = val
+	}
+
+	opts := &client.DatasetCreateOptions{
+		Name:         datasetPath,
+		Type:         datasetTypeVolume,
+		Volsize:      capacityBytes,
+		Volblocksize: volblocksize,
+		Compression:  compression,
+		Properties:   make(map[string]any),
+	}
+
+	if _, ok := parameters[paramDatasetPath]; ok {
+		opts.CreateAncestors = true
+	}
+
+	if val, ok := parameters[paramSparse]; ok && strings.EqualFold(val, "true") {
+		sparse := true
+		opts.Sparse = &sparse
+		s.driver.Log().V(LogLevelDebug).Info("Enabling sparse (thin) provisioning for ZVOL", "dataset", datasetPath)
+	}
+
+	for key, value := range parameters {
+		if propName, found := strings.CutPrefix(key, "zfs."); found {
+			opts.Properties[propName] = value
+		}
+	}
+
+	if encOpts := parseEncryptionOptions(parameters); encOpts != nil {
+		opts.Encryption = true
+		opts.EncryptionOptions = encOpts
+		inheritEncryption := false
+		opts.InheritEncryption = &inheritEncryption
+		s.driver.Log().V(LogLevelDebug).Info("Enabling encryption for ZVOL", "dataset", datasetPath, "algorithm", encOpts.Algorithm)
+	}
+
+	return opts
+}
+
+// ensureNVMeHost gets or creates a shared nvmet host for the StorageClass's hostNQN.
+// Hosts are shared across all volumes in a StorageClass; concurrent creation is
+// tolerated by re-querying on conflict.
+func (s *ControllerServer) ensureNVMeHost(ctx context.Context, parameters map[string]string) (int, error) {
+	hostNQN := parameters[paramNVMeOFHostNQN]
+	if hostNQN == "" {
+		return 0, fmt.Errorf("nvmeof.hostNQN is required for DH-CHAP")
+	}
+
+	if host, err := s.driver.Client().GetNVMeHostByNQN(ctx, hostNQN); err == nil && host != nil {
+		return host.ID, nil
+	} else if err != nil && !client.IsNotFoundError(err) {
+		return 0, fmt.Errorf("failed to query NVMe-oF host: %w", err)
+	}
+
+	opts := &client.NVMeHostCreateOptions{
+		HostNQN:       hostNQN,
+		DHCHAPKey:     parameters[paramNVMeOFDHCHAPKey],
+		DHCHAPCtrlKey: parameters[paramNVMeOFDHCHAPCtrlKey],
+		DHCHAPHash:    parameters[paramNVMeOFDHCHAPHash],
+		DHCHAPDHGroup: parameters[paramNVMeOFDHCHAPDHGroup],
+	}
+	host, err := s.driver.Client().CreateNVMeHost(ctx, opts)
+	if err != nil {
+		// Another concurrent CreateVolume in the same StorageClass may have created it.
+		if existing, qerr := s.driver.Client().GetNVMeHostByNQN(ctx, hostNQN); qerr == nil && existing != nil {
+			return existing.ID, nil
+		}
+		return 0, fmt.Errorf("failed to create NVMe-oF host: %w", err)
+	}
+	return host.ID, nil
+}
+
+// createNVMeOFVolume creates a ZVOL and the NVMe-oF subsystem/namespace/port chain
+// (plus DH-CHAP host authorization when configured). Cleanup on failure is reverse
+// order; the shared port and shared host are never deleted here.
+func (s *ControllerServer) createNVMeOFVolume(ctx context.Context, volumeID, datasetPath string, capacityBytes int64, parameters map[string]string) (*VolumeInfo, error) {
+	portID, err := s.driver.NVMeOFPortID(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to resolve NVMe-oF port: %w", err)
+	}
+
+	datasetOpts := s.buildZVOLCreateOptions(datasetPath, capacityBytes, parameters)
+	if _, err := s.driver.Client().CreateDataset(ctx, datasetOpts); err != nil {
+		return nil, fmt.Errorf("failed to create ZVOL: %w", err)
+	}
+	cleanupDataset := func() {
+		s.driver.Client().DeleteDataset(ctx, datasetPath, &client.DatasetDeleteOptions{Recursive: true, Force: true})
+	}
+
+	hostNQN := parameters[paramNVMeOFHostNQN]
+	allowAnyHost := hostNQN == ""
+
+	subsys, err := s.driver.Client().CreateNVMeSubsystem(ctx, makeNVMeSubsysName(volumeID), allowAnyHost)
+	if err != nil {
+		cleanupDataset()
+		return nil, fmt.Errorf("failed to create NVMe-oF subsystem: %w", err)
+	}
+
+	zvolPath := "zvol/" + datasetPath
+	ns, err := s.driver.Client().CreateNVMeNamespace(ctx, subsys.ID, client.NVMeDeviceTypeZVOL, zvolPath)
+	if err != nil {
+		s.driver.Client().DeleteNVMeSubsystem(ctx, subsys.ID)
+		cleanupDataset()
+		return nil, fmt.Errorf("failed to create NVMe-oF namespace: %w", err)
+	}
+
+	portSubsys, err := s.driver.Client().CreateNVMePortSubsys(ctx, portID, subsys.ID)
+	if err != nil {
+		s.driver.Client().DeleteNVMeNamespace(ctx, ns.ID)
+		s.driver.Client().DeleteNVMeSubsystem(ctx, subsys.ID)
+		cleanupDataset()
+		return nil, fmt.Errorf("failed to link NVMe-oF port to subsystem: %w", err)
+	}
+
+	var hostID, hostSubsysID int
+	if hostNQN != "" {
+		hostID, err = s.ensureNVMeHost(ctx, parameters)
+		if err != nil {
+			s.driver.Client().DeleteNVMePortSubsys(ctx, portSubsys.ID)
+			s.driver.Client().DeleteNVMeNamespace(ctx, ns.ID)
+			s.driver.Client().DeleteNVMeSubsystem(ctx, subsys.ID)
+			cleanupDataset()
+			return nil, err
+		}
+		hs, err := s.driver.Client().CreateNVMeHostSubsys(ctx, hostID, subsys.ID)
+		if err != nil {
+			s.driver.Client().DeleteNVMePortSubsys(ctx, portSubsys.ID)
+			s.driver.Client().DeleteNVMeNamespace(ctx, ns.ID)
+			s.driver.Client().DeleteNVMeSubsystem(ctx, subsys.ID)
+			cleanupDataset()
+			return nil, fmt.Errorf("failed to authorize host on NVMe-oF subsystem: %w", err)
+		}
+		hostSubsysID = hs.ID
+	}
+
+	// Create snapshot task if configured (best-effort, like iSCSI).
+	if _, err := s.createSnapshotTaskFromParameters(ctx, datasetPath, parameters); err != nil {
+		s.driver.Log().Error(err, "Failed to create snapshot task for volume", "dataset", datasetPath)
+	}
+
+	pool := client.ExtractPoolFromPath(datasetPath)
+	volInfo := &VolumeInfo{
+		ID:                volumeID,
+		Name:              volumeID,
+		CapacityBytes:     capacityBytes,
+		DatasetPath:       datasetPath,
+		PoolName:          pool,
+		Protocol:          ProtocolNVMeOF,
+		NVMeSubNQN:        subsys.SubNQN,
+		NVMeNamespaceUUID: ns.DeviceUUID,
+		NVMeSubsysID:      subsys.ID,
+		NVMeNamespaceID:   ns.ID,
+		NVMePortID:        portID,
+		NVMeHostID:        hostID,
+		NVMeHostSubsysID:  hostSubsysID,
+		VolumeContext:     parameters,
+		AccessibleTopology: []*csi.Topology{
+			{Segments: map[string]string{"topology.truenas.io/pool": pool}},
+		},
+	}
+	s.driver.Log().V(LogLevelDebug).Info("Created NVMe-oF volume", "volumeId", volumeID, "subNQN", subsys.SubNQN, "nsUUID", ns.DeviceUUID)
+	return volInfo, nil
+}
+
+// ensureNVMeOFChain verifies the NVMe-oF subsystem/namespace/port chain exists for
+// an existing ZVOL and creates any missing pieces (mirrors ensureISCSIChain for a
+// CreateVolume interrupted after the ZVOL was created). Returns the volume context.
+func (s *ControllerServer) ensureNVMeOFChain(ctx context.Context, volumeID, datasetPath string, parameters map[string]string) (map[string]string, error) {
+	zvolPath := "zvol/" + datasetPath
+
+	// If the namespace already exists, the chain is complete.
+	if _, err := s.driver.Client().GetNVMeNamespaceByDevice(ctx, zvolPath); err == nil {
+		return parameters, nil
+	} else if !client.IsNotFoundError(err) {
+		return nil, fmt.Errorf("failed to query NVMe-oF namespace: %w", err)
+	}
+
+	portID, err := s.driver.NVMeOFPortID(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	hostNQN := parameters[paramNVMeOFHostNQN]
+	allowAnyHost := hostNQN == ""
+
+	subsysName := makeNVMeSubsysName(volumeID)
+	subsys, err := s.driver.Client().GetNVMeSubsystemByName(ctx, subsysName)
+	if err != nil {
+		if !client.IsNotFoundError(err) {
+			return nil, fmt.Errorf("failed to query NVMe-oF subsystem: %w", err)
+		}
+		subsys, err = s.driver.Client().CreateNVMeSubsystem(ctx, subsysName, allowAnyHost)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create NVMe-oF subsystem: %w", err)
+		}
+	}
+
+	if _, err := s.driver.Client().CreateNVMeNamespace(ctx, subsys.ID, client.NVMeDeviceTypeZVOL, zvolPath); err != nil {
+		return nil, fmt.Errorf("failed to create NVMe-oF namespace: %w", err)
+	}
+
+	if links, _ := s.driver.Client().GetNVMePortSubsysBySubsystem(ctx, subsys.ID); len(links) == 0 {
+		if _, err := s.driver.Client().CreateNVMePortSubsys(ctx, portID, subsys.ID); err != nil {
+			return nil, fmt.Errorf("failed to link NVMe-oF port to subsystem: %w", err)
+		}
+	}
+
+	if hostNQN != "" {
+		hostID, err := s.ensureNVMeHost(ctx, parameters)
+		if err != nil {
+			return nil, err
+		}
+		hostLinks, _ := s.driver.Client().GetNVMeHostSubsysBySubsystem(ctx, subsys.ID)
+		linked := false
+		for _, hl := range hostLinks {
+			if hl.Host != nil && hl.Host.ID == hostID {
+				linked = true
+				break
+			}
+		}
+		if !linked {
+			if _, err := s.driver.Client().CreateNVMeHostSubsys(ctx, hostID, subsys.ID); err != nil {
+				return nil, fmt.Errorf("failed to authorize host on NVMe-oF subsystem: %w", err)
+			}
+		}
+	}
+
+	return parameters, nil
+}
+
+// deleteNVMeOFResources tears down the NVMe-oF chain for a volume children-first
+// (host links → port links → namespaces → subsystem). The shared TCP port is never
+// deleted; a shared DH-CHAP host is garbage-collected only when its last
+// host_subsys link is removed. Best-effort: errors are logged, not returned.
+func (s *ControllerServer) deleteNVMeOFResources(ctx context.Context, volInfo *VolumeInfo) {
+	subsysID := volInfo.NVMeSubsysID
+	if subsysID == 0 {
+		s.driver.Log().V(LogLevelDebug).Info("No NVMe-oF subsystem ID for volume, skipping cleanup", "volumeId", volInfo.ID)
+		return
+	}
+
+	// Remove host authorizations, GC'ing shared hosts that become unreferenced.
+	hostLinks, err := s.driver.Client().GetNVMeHostSubsysBySubsystem(ctx, subsysID)
+	if err != nil {
+		s.driver.Log().V(LogLevelDebug).Error(err, "Failed to query NVMe-oF host links", "subsysId", subsysID)
+	}
+	for _, hl := range hostLinks {
+		if err := s.driver.Client().DeleteNVMeHostSubsys(ctx, hl.ID); err != nil {
+			s.driver.Log().V(LogLevelDebug).Error(err, "Failed to delete NVMe-oF host link", "id", hl.ID)
+			continue
+		}
+		if hl.Host == nil {
+			continue
+		}
+		remaining, err := s.driver.Client().GetNVMeHostSubsysByHost(ctx, hl.Host.ID)
+		if err != nil {
+			s.driver.Log().V(LogLevelDebug).Error(err, "Failed to query remaining host links", "hostId", hl.Host.ID)
+			continue
+		}
+		if len(remaining) == 0 {
+			if err := s.driver.Client().DeleteNVMeHost(ctx, hl.Host.ID); err != nil {
+				s.driver.Log().V(LogLevelDebug).Error(err, "Failed to delete NVMe-oF host", "hostId", hl.Host.ID)
+			}
+		}
+	}
+
+	// Remove port associations (the shared port itself stays).
+	portLinks, err := s.driver.Client().GetNVMePortSubsysBySubsystem(ctx, subsysID)
+	if err != nil {
+		s.driver.Log().V(LogLevelDebug).Error(err, "Failed to query NVMe-oF port links", "subsysId", subsysID)
+	}
+	for _, pl := range portLinks {
+		if err := s.driver.Client().DeleteNVMePortSubsys(ctx, pl.ID); err != nil {
+			s.driver.Log().V(LogLevelDebug).Error(err, "Failed to delete NVMe-oF port link", "id", pl.ID)
+		}
+	}
+
+	// Delete namespaces, then the subsystem.
+	namespaces, err := s.driver.Client().GetNVMeNamespacesBySubsystem(ctx, subsysID)
+	if err != nil {
+		s.driver.Log().V(LogLevelDebug).Error(err, "Failed to query NVMe-oF namespaces", "subsysId", subsysID)
+	}
+	for _, ns := range namespaces {
+		if err := s.driver.Client().DeleteNVMeNamespace(ctx, ns.ID); err != nil {
+			s.driver.Log().V(LogLevelDebug).Error(err, "Failed to delete NVMe-oF namespace", "id", ns.ID)
+		}
+	}
+	if err := s.driver.Client().DeleteNVMeSubsystem(ctx, subsysID); err != nil {
+		s.driver.Log().V(LogLevelDebug).Error(err, "Failed to delete NVMe-oF subsystem", "subsysId", subsysID)
+	}
+}
+
 // ensureISCSIChain verifies that the iSCSI target, extent, and target-extent association
 // exist for an existing ZVOL. If any are missing (e.g., a previous CreateVolume was
 // interrupted by a connection drop after creating the ZVOL), they are created.
@@ -675,50 +1066,7 @@ func (s *ControllerServer) createISCSIVolume(ctx context.Context, volumeID, data
 		return nil, fmt.Errorf("failed to resolve iSCSI portal ID: %w", err)
 	}
 
-	compression := CompressionLZ4
-	if val, ok := parameters[paramCompression]; ok {
-		compression = strings.ToUpper(val)
-	}
-
-	volblocksize := defaultVolBlockSize
-	if val, ok := parameters[paramVolBlockSize]; ok {
-		volblocksize = val
-	}
-
-	datasetOpts := &client.DatasetCreateOptions{
-		Name:         datasetPath,
-		Type:         datasetTypeVolume,
-		Volsize:      capacityBytes,
-		Volblocksize: volblocksize,
-		Compression:  compression,
-		Properties:   make(map[string]any),
-	}
-
-	// Enable ancestor creation when datasetPath places volumes in a subdirectory
-	if _, ok := parameters[paramDatasetPath]; ok {
-		datasetOpts.CreateAncestors = true
-	}
-
-	if val, ok := parameters[paramSparse]; ok && strings.EqualFold(val, "true") {
-		sparse := true
-		datasetOpts.Sparse = &sparse
-		s.driver.Log().V(LogLevelDebug).Info("Enabling sparse (thin) provisioning for ZVOL", "dataset", datasetPath)
-	}
-
-	for key, value := range parameters {
-		if propName, found := strings.CutPrefix(key, "zfs."); found {
-			datasetOpts.Properties[propName] = value
-		}
-	}
-
-	// Add encryption options if configured
-	if encOpts := parseEncryptionOptions(parameters); encOpts != nil {
-		datasetOpts.Encryption = true
-		datasetOpts.EncryptionOptions = encOpts
-		inheritEncryption := false
-		datasetOpts.InheritEncryption = &inheritEncryption
-		s.driver.Log().V(LogLevelDebug).Info("Enabling encryption for ZVOL", "dataset", datasetPath, "algorithm", encOpts.Algorithm)
-	}
+	datasetOpts := s.buildZVOLCreateOptions(datasetPath, capacityBytes, parameters)
 
 	_, err = s.driver.Client().CreateDataset(ctx, datasetOpts)
 	if err != nil {
@@ -890,17 +1238,22 @@ func (s *ControllerServer) createVolumeFromSource(ctx context.Context, req *csi.
 	if err == nil && existingDataset != nil {
 		s.driver.Log().V(LogLevelDebug).Info("Volume from content source already exists", "volumeId", volumeID)
 		capacityBytes := existingDataset.RefQuota
-		if protocol == ProtocolISCSI && existingDataset.Volsize > 0 {
+		if isZVOLProtocol(protocol) && existingDataset.Volsize > 0 {
 			capacityBytes = existingDataset.Volsize
 		}
 
-		// For iSCSI ZVOLs, ensure the full iSCSI chain exists.
-		// A previous CreateVolume may have cloned the ZVOL but failed before
-		// completing the iSCSI target/extent setup.
-		if existingDataset.Type == datasetTypeVolume && protocol == ProtocolISCSI {
-			volCtx, err := s.ensureISCSIChain(ctx, volumeID, datasetPath, parameters)
+		// For ZVOL-backed clones, ensure the full protocol chain exists. A previous
+		// CreateVolume may have cloned the ZVOL but failed before completing the
+		// iSCSI target/extent or NVMe-oF subsystem/namespace setup.
+		if existingDataset.Type == datasetTypeVolume && isZVOLProtocol(protocol) {
+			var volCtx map[string]string
+			if protocol == ProtocolNVMeOF {
+				volCtx, err = s.ensureNVMeOFChain(ctx, volumeID, datasetPath, parameters)
+			} else {
+				volCtx, err = s.ensureISCSIChain(ctx, volumeID, datasetPath, parameters)
+			}
 			if err != nil {
-				return nil, status.Errorf(codes.Internal, "failed to ensure iSCSI resources for existing clone: %v", err)
+				return nil, status.Errorf(codes.Internal, "failed to ensure resources for existing clone: %v", err)
 			}
 			return &csi.CreateVolumeResponse{
 				Volume: &csi.Volume{
@@ -944,7 +1297,7 @@ func (s *ControllerServer) createVolumeFromSource(ctx context.Context, req *csi.
 		}
 		if requiredBytes > 0 {
 			updateOpts := &client.DatasetUpdateOptions{}
-			if protocol == ProtocolISCSI {
+			if isZVOLProtocol(protocol) {
 				updateOpts.Volsize = &requiredBytes
 				clonedDs, err := s.driver.Client().GetDataset(ctx, datasetPath)
 				if err != nil {
@@ -968,9 +1321,12 @@ func (s *ControllerServer) createVolumeFromSource(ctx context.Context, req *csi.
 		}
 
 		var volInfo *VolumeInfo
-		if protocol == ProtocolISCSI {
+		switch protocol {
+		case ProtocolISCSI:
 			volInfo, err = s.createISCSITargetForClone(ctx, volumeID, datasetPath, requiredBytes, parameters)
-		} else {
+		case ProtocolNVMeOF:
+			volInfo, err = s.createNVMeOFTargetForClone(ctx, volumeID, datasetPath, requiredBytes, parameters)
+		default:
 			volInfo, err = s.createNFSShareForClone(ctx, volumeID, datasetPath, dataset, parameters)
 		}
 
@@ -982,7 +1338,7 @@ func (s *ControllerServer) createVolumeFromSource(ctx context.Context, req *csi.
 		volInfo.ContentSource = contentSource
 
 		capacityBytes := dataset.RefQuota
-		if protocol == ProtocolISCSI {
+		if isZVOLProtocol(protocol) {
 			capacityBytes = requiredBytes
 		}
 
@@ -1027,7 +1383,7 @@ func (s *ControllerServer) createVolumeFromSource(ctx context.Context, req *csi.
 		}
 		if requiredBytes > 0 {
 			updateOpts := &client.DatasetUpdateOptions{}
-			if protocol == ProtocolISCSI {
+			if isZVOLProtocol(protocol) {
 				updateOpts.Volsize = &requiredBytes
 				clonedDs, err := s.driver.Client().GetDataset(ctx, datasetPath)
 				if err != nil {
@@ -1051,9 +1407,12 @@ func (s *ControllerServer) createVolumeFromSource(ctx context.Context, req *csi.
 		}
 
 		var volInfo *VolumeInfo
-		if protocol == ProtocolISCSI {
+		switch protocol {
+		case ProtocolISCSI:
 			volInfo, err = s.createISCSITargetForClone(ctx, volumeID, datasetPath, requiredBytes, parameters)
-		} else {
+		case ProtocolNVMeOF:
+			volInfo, err = s.createNVMeOFTargetForClone(ctx, volumeID, datasetPath, requiredBytes, parameters)
+		default:
 			volInfo, err = s.createNFSShareForClone(ctx, volumeID, datasetPath, dataset, parameters)
 		}
 
@@ -1065,7 +1424,7 @@ func (s *ControllerServer) createVolumeFromSource(ctx context.Context, req *csi.
 		volInfo.ContentSource = contentSource
 
 		capacityBytes := dataset.RefQuota
-		if protocol == ProtocolISCSI {
+		if isZVOLProtocol(protocol) {
 			capacityBytes = requiredBytes
 		}
 
@@ -1204,6 +1563,84 @@ func (s *ControllerServer) createISCSITargetForClone(ctx context.Context, volume
 	return volInfo, nil
 }
 
+// isZVOLProtocol reports whether the protocol is backed by a ZVOL (iSCSI or NVMe-oF).
+func isZVOLProtocol(protocol string) bool {
+	return protocol == ProtocolISCSI || protocol == ProtocolNVMeOF
+}
+
+// createNVMeOFTargetForClone builds the NVMe-oF chain for an already-cloned ZVOL
+// (subsystem + namespace + port link, plus DH-CHAP host authorization when set).
+// Mirrors createISCSITargetForClone; the dataset already exists (it was cloned).
+func (s *ControllerServer) createNVMeOFTargetForClone(ctx context.Context, volumeID, datasetPath string, capacityBytes int64, parameters map[string]string) (*VolumeInfo, error) {
+	portID, err := s.driver.NVMeOFPortID(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to resolve NVMe-oF port: %w", err)
+	}
+
+	hostNQN := parameters[paramNVMeOFHostNQN]
+	allowAnyHost := hostNQN == ""
+
+	subsys, err := s.driver.Client().CreateNVMeSubsystem(ctx, makeNVMeSubsysName(volumeID), allowAnyHost)
+	if err != nil {
+		return nil, err
+	}
+
+	zvolPath := fmt.Sprintf("zvol/%s", datasetPath)
+	ns, err := s.driver.Client().CreateNVMeNamespace(ctx, subsys.ID, client.NVMeDeviceTypeZVOL, zvolPath)
+	if err != nil {
+		s.driver.Client().DeleteNVMeSubsystem(ctx, subsys.ID)
+		return nil, err
+	}
+
+	portSubsys, err := s.driver.Client().CreateNVMePortSubsys(ctx, portID, subsys.ID)
+	if err != nil {
+		s.driver.Client().DeleteNVMeNamespace(ctx, ns.ID)
+		s.driver.Client().DeleteNVMeSubsystem(ctx, subsys.ID)
+		return nil, err
+	}
+
+	var hostID, hostSubsysID int
+	if hostNQN != "" {
+		hostID, err = s.ensureNVMeHost(ctx, parameters)
+		if err != nil {
+			s.driver.Client().DeleteNVMePortSubsys(ctx, portSubsys.ID)
+			s.driver.Client().DeleteNVMeNamespace(ctx, ns.ID)
+			s.driver.Client().DeleteNVMeSubsystem(ctx, subsys.ID)
+			return nil, err
+		}
+		hs, err := s.driver.Client().CreateNVMeHostSubsys(ctx, hostID, subsys.ID)
+		if err != nil {
+			s.driver.Client().DeleteNVMePortSubsys(ctx, portSubsys.ID)
+			s.driver.Client().DeleteNVMeNamespace(ctx, ns.ID)
+			s.driver.Client().DeleteNVMeSubsystem(ctx, subsys.ID)
+			return nil, err
+		}
+		hostSubsysID = hs.ID
+	}
+
+	pool := client.ExtractPoolFromPath(datasetPath)
+	volInfo := &VolumeInfo{
+		ID:                volumeID,
+		Name:              volumeID,
+		CapacityBytes:     capacityBytes,
+		DatasetPath:       datasetPath,
+		PoolName:          pool,
+		Protocol:          ProtocolNVMeOF,
+		NVMeSubNQN:        subsys.SubNQN,
+		NVMeNamespaceUUID: ns.DeviceUUID,
+		NVMeSubsysID:      subsys.ID,
+		NVMeNamespaceID:   ns.ID,
+		NVMePortID:        portID,
+		NVMeHostID:        hostID,
+		NVMeHostSubsysID:  hostSubsysID,
+		VolumeContext:     parameters,
+		AccessibleTopology: []*csi.Topology{
+			{Segments: map[string]string{"topology.truenas.io/pool": pool}},
+		},
+	}
+	return volInfo, nil
+}
+
 // DeleteVolume deletes a volume and all its associated resources (NFS share or iSCSI target/extent).
 func (s *ControllerServer) DeleteVolume(ctx context.Context, req *csi.DeleteVolumeRequest) (*csi.DeleteVolumeResponse, error) {
 	ctx, cancel := withTimeout(ctx, defaultOperationTimeout)
@@ -1268,6 +1705,11 @@ func (s *ControllerServer) DeleteVolume(ctx context.Context, req *csi.DeleteVolu
 				s.driver.Log().V(LogLevelDebug).Error(err, "Failed to delete iSCSI initiator", "initiatorId", volInfo.ISCSIInitiatorID)
 			}
 		}
+	}
+
+	// Clean up NVMe-oF resources (children-first; never delete the shared port).
+	if volInfo != nil && volInfo.Protocol == ProtocolNVMeOF {
+		s.deleteNVMeOFResources(ctx, volInfo)
 	}
 
 	// Always try to delete NFS share by path to ensure cleanup before dataset deletion
@@ -1354,52 +1796,56 @@ func (s *ControllerServer) ControllerPublishVolume(ctx context.Context, req *csi
 	// Check if we got valid volume info with complete iSCSI details
 	// (reconstructVolumeFromTrueNAS may return volInfo with empty TargetIQN if extent lookup failed)
 	hasValidISCSIInfo := volInfo != nil && volInfo.Protocol == ProtocolISCSI && volInfo.TargetIQN != ""
+	hasValidNVMeInfo := volInfo != nil && volInfo.Protocol == ProtocolNVMeOF && volInfo.NVMeSubNQN != ""
 	hasValidNFSInfo := volInfo != nil && volInfo.Protocol == ProtocolNFS && volInfo.NFSPath != ""
 
 	if hasValidISCSIInfo {
-		// Block volumes only supported for iSCSI
-		if isBlockVolume && volInfo.Protocol != ProtocolISCSI {
-			return nil, status.Error(codes.InvalidArgument, "block volume capability only supported for iSCSI")
-		}
 		publishContext[PublishContextProtocol] = volInfo.Protocol
 		publishContext[PublishContextTargetPortal] = volInfo.TargetPortal
 		publishContext[PublishContextTargetIQN] = volInfo.TargetIQN
 		publishContext[PublishContextLUN] = fmt.Sprintf("%d", volInfo.LUN)
+	} else if hasValidNVMeInfo {
+		publishContext[PublishContextProtocol] = ProtocolNVMeOF
+		publishContext[PublishContextNVMeSubNQN] = volInfo.NVMeSubNQN
+		publishContext[PublishContextNVMePortAddr] = s.driver.NVMeOFPortAddr()
+		publishContext[PublishContextNVMePortSvcID] = fmt.Sprintf("%d", s.driver.NVMeOFPortSvcID())
+		publishContext[PublishContextNVMeTransport] = defaultNVMeOFTransport
+		publishContext[PublishContextNVMeNSUUID] = volInfo.NVMeNamespaceUUID
 	} else if hasValidNFSInfo {
 		publishContext[PublishContextProtocol] = volInfo.Protocol
 		publishContext[PublishContextNFSServer] = volInfo.VolumeContext[PublishContextNFSServer]
 		publishContext[PublishContextNFSPath] = volInfo.NFSPath
 	} else {
-		// Volume exists in TrueNAS but not in cache - determine protocol from dataset type
+		// Volume exists in TrueNAS but reconstruction returned incomplete info.
+		// A ZVOL may back iSCSI or NVMe-oF; probe both before defaulting.
 		if dataset.Type == datasetTypeVolume {
-			// iSCSI ZVOL - reconstruct iSCSI info from TrueNAS
-			publishContext[PublishContextProtocol] = ProtocolISCSI
-			publishContext[PublishContextTargetPortal] = s.driver.ISCSIPortal()
-
-			// Query TrueNAS for iSCSI target info
 			zvolPath := fmt.Sprintf("zvol/%s", datasetPath)
-			s.driver.Log().Info("Looking up iSCSI extent", "volumeId", req.VolumeId, "zvolPath", zvolPath)
-			extent, err := s.driver.Client().GetISCSIExtentByDisk(ctx, zvolPath)
-			if err != nil {
-				s.driver.Log().Info("Could not find iSCSI extent for volume", "volumeId", req.VolumeId, "zvolPath", zvolPath, "error", err)
-			} else {
-				// Found extent, now find the target-extent association
-				targetExtent, err := s.driver.Client().GetISCSITargetExtentByExtent(ctx, extent.ID)
-				if err != nil {
-					s.driver.Log().V(LogLevelDebug).Info("Could not find target-extent association", "volumeId", req.VolumeId, "extentId", extent.ID, "error", err)
-				} else {
-					// Found association, get the target details
-					target, err := s.driver.Client().GetISCSITargetByID(ctx, targetExtent.Target)
-					if err != nil {
-						s.driver.Log().V(LogLevelDebug).Info("Could not find iSCSI target", "volumeId", req.VolumeId, "targetId", targetExtent.Target, "error", err)
-					} else {
-						// Successfully reconstructed iSCSI info
+			if extent, err := s.driver.Client().GetISCSIExtentByDisk(ctx, zvolPath); err == nil && extent != nil {
+				publishContext[PublishContextProtocol] = ProtocolISCSI
+				publishContext[PublishContextTargetPortal] = s.driver.ISCSIPortal()
+				if targetExtent, err := s.driver.Client().GetISCSITargetExtentByExtent(ctx, extent.ID); err == nil {
+					if target, err := s.driver.Client().GetISCSITargetByID(ctx, targetExtent.Target); err == nil {
 						fullIQN := fmt.Sprintf("%s:%s", s.driver.ISCSIIQNBase(), target.Name)
 						publishContext[PublishContextTargetIQN] = fullIQN
 						publishContext[PublishContextLUN] = fmt.Sprintf("%d", targetExtent.LunID)
 						s.driver.Log().Info("Reconstructed iSCSI info from TrueNAS", "volumeId", req.VolumeId, "targetIQN", fullIQN, "lun", targetExtent.LunID)
 					}
 				}
+			} else if ns, err := s.driver.Client().GetNVMeNamespaceByDevice(ctx, zvolPath); err == nil && ns != nil {
+				publishContext[PublishContextProtocol] = ProtocolNVMeOF
+				publishContext[PublishContextNVMePortAddr] = s.driver.NVMeOFPortAddr()
+				publishContext[PublishContextNVMePortSvcID] = fmt.Sprintf("%d", s.driver.NVMeOFPortSvcID())
+				publishContext[PublishContextNVMeTransport] = defaultNVMeOFTransport
+				publishContext[PublishContextNVMeNSUUID] = ns.DeviceUUID
+				if ns.Subsys != nil {
+					publishContext[PublishContextNVMeSubNQN] = ns.Subsys.SubNQN
+				}
+				s.driver.Log().Info("Reconstructed NVMe-oF info from TrueNAS", "volumeId", req.VolumeId, "subNQN", publishContext[PublishContextNVMeSubNQN])
+			} else {
+				// No protocol resources found — default to iSCSI portal.
+				publishContext[PublishContextProtocol] = ProtocolISCSI
+				publishContext[PublishContextTargetPortal] = s.driver.ISCSIPortal()
+				s.driver.Log().Info("No iSCSI/NVMe resources found for ZVOL", "volumeId", req.VolumeId, "zvolPath", zvolPath)
 			}
 		} else {
 			// NFS filesystem - block volumes not supported
@@ -1870,8 +2316,12 @@ func (s *ControllerServer) ControllerExpandVolume(ctx context.Context, req *csi.
 		}, nil
 	}
 
+	// iSCSI and NVMe-oF are both ZVOL-backed: grow volsize (and refreservation for
+	// thick zvols). NFS is a filesystem dataset: grow refquota.
+	isZVOL := volInfo.Protocol == ProtocolISCSI || volInfo.Protocol == ProtocolNVMeOF
+
 	updates := &client.DatasetUpdateOptions{}
-	if volInfo.Protocol == ProtocolISCSI {
+	if isZVOL {
 		updates.Volsize = &newSize
 
 		dataset, err := s.driver.Client().GetDataset(ctx, volInfo.DatasetPath)
@@ -1893,7 +2343,7 @@ func (s *ControllerServer) ControllerExpandVolume(ctx context.Context, req *csi.
 
 	return &csi.ControllerExpandVolumeResponse{
 		CapacityBytes:         newSize,
-		NodeExpansionRequired: volInfo.Protocol == ProtocolISCSI,
+		NodeExpansionRequired: isZVOL,
 	}, nil
 }
 
