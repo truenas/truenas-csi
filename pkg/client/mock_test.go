@@ -135,6 +135,14 @@ func (m *MockTrueNASServer) Close() {
 
 // handleWebSocket handles incoming WebSocket connections.
 func (m *MockTrueNASServer) handleWebSocket(w http.ResponseWriter, r *http.Request) {
+	// Serve the supported-versions preflight like real TrueNAS does, without
+	// counting it as a WebSocket connection.
+	if r.URL.Path == apiVersionsPath {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode([]string{APIVersion})
+		return
+	}
+
 	m.mu.Lock()
 	m.connectionCount++
 	m.mu.Unlock()

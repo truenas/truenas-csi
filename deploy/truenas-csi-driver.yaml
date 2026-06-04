@@ -157,7 +157,7 @@ metadata:
   name: truenas-csi-config
   namespace: truenas-csi
 data:
-  truenasURL: "wss://YOUR-TRUENAS-IP/api/current"
+  truenasURL: "wss://YOUR-TRUENAS-IP"
   truenasInsecure: "true"  # Set to "true" for self-signed certificates, "false" or remove for valid certs
   defaultPool: "tank"
   nfsServer: "YOUR-TRUENAS-IP"
