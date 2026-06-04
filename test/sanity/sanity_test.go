@@ -34,6 +34,7 @@ const (
 // Optional environment variables:
 //   - TRUENAS_INSECURE_SKIP_VERIFY: Set to "true" for self-signed certs
 //   - TRUENAS_ISCSI_IQN_BASE: Custom IQN prefix
+//   - TRUENAS_NVMEOF_PORTAL: NVMe-oF portal (e.g., 10.0.0.1:4420); auto-derived if unset
 //
 // Run with: go test -v -tags=integration ./test/sanity/...
 func TestSanity(t *testing.T) {
@@ -167,6 +168,64 @@ func TestSanityISCSI(t *testing.T) {
 	drv.Stop()
 }
 
+// TestSanityNVMeOF runs sanity tests specifically for NVMe-oF/TCP volumes.
+// Requires privileged access (nvme connect / kernel modules) and TrueNAS 25.10+.
+func TestSanityNVMeOF(t *testing.T) {
+	if os.Getenv("TRUENAS_URL") == "" {
+		t.Skip("Skipping NVMe-oF sanity test: TRUENAS_URL not set")
+	}
+
+	// NVMe-oF tests require root/privileged access for nvme connect.
+	if os.Geteuid() != 0 {
+		t.Skip("Skipping NVMe-oF sanity test: requires root privileges")
+	}
+
+	tmpDir, err := os.MkdirTemp("", "csi-sanity-nvmeof-")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	endpoint := filepath.Join(tmpDir, "csi.sock")
+	targetPath := filepath.Join(tmpDir, "target")
+	stagingPath := filepath.Join(tmpDir, "staging")
+
+	config := buildTestConfig(endpoint)
+
+	drv, err := driver.NewDriver(config)
+	if err != nil {
+		t.Fatalf("Failed to create driver: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- drv.Run(ctx)
+	}()
+
+	if err := waitForSocket(endpoint, driverStartTimeout); err != nil {
+		t.Fatalf("Driver failed to start: %v", err)
+	}
+
+	sanityConfig := sanity.NewTestConfig()
+	sanityConfig.Address = "unix://" + endpoint
+	sanityConfig.TargetPath = targetPath
+	sanityConfig.StagingPath = stagingPath
+	sanityConfig.TestVolumeSize = 1 * 1024 * 1024 * 1024
+
+	// NVMe-oF parameters
+	sanityConfig.TestVolumeParameters = map[string]string{
+		"protocol": "nvmeof",
+	}
+
+	sanity.Test(t, sanityConfig)
+
+	cancel()
+	drv.Stop()
+}
+
 // buildTestConfig creates a DriverConfig from environment variables.
 func buildTestConfig(endpoint string) *driver.DriverConfig {
 	pool := os.Getenv("TRUENAS_DEFAULT_POOL")
@@ -183,6 +242,7 @@ func buildTestConfig(endpoint string) *driver.DriverConfig {
 		NFSServer:     os.Getenv("TRUENAS_NFS_SERVER"),
 		ISCSIPortal:   os.Getenv("TRUENAS_ISCSI_PORTAL"),
 		ISCSIIQNBase:  os.Getenv("TRUENAS_ISCSI_IQN_BASE"),
+		NVMeOFPortal:  os.Getenv("TRUENAS_NVMEOF_PORTAL"),
 		Logger:        textlogger.NewLogger(textlogger.NewConfig()),
 	}
 
