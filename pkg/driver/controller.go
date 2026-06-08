@@ -72,6 +72,8 @@ const (
 	paramDatasetPermissions = "datasetPermissions"
 	paramDatasetUser        = "datasetUser"
 	paramDatasetGroup       = "datasetGroup"
+	paramDatasetUID         = "datasetUID"
+	paramDatasetGID         = "datasetGID"
 	paramCompression        = "compression"
 	paramSync               = "sync"
 	paramVolBlockSize       = "volblocksize"
@@ -261,7 +263,7 @@ func (s *ControllerServer) validateStorageClassParameters(ctx context.Context, p
 		}
 	}
 
-	// Validate Unix Permission
+	// Validate Unix Permission (only the 3 digit form, we won't use special things)
 	if val, ok := parameters[paramDatasetPermissions]; ok && val != "" {
 		matched, err := regexp.MatchString("[0-7]{3}", val)
 		if err != nil || matched == false {
@@ -282,6 +284,22 @@ func (s *ControllerServer) validateStorageClassParameters(ctx context.Context, p
 		length := utf8.RuneCountInString(val)
 		if length < 1 {
 			return fmt.Errorf("invalid DatasetGroup length: %s", val)
+		}
+	}
+
+	// Validate DatasetUID
+	if val, ok := parameters[paramDatasetUID]; ok && val != "" {
+		_, err := strconv.ParseInt(val, 10, 32)
+		if err != nil {
+			return fmt.Errorf("invalid DatasetUID: %s", val)
+		}
+	}
+
+	// Validate DatasetGID
+	if val, ok := parameters[paramDatasetGID]; ok && val != "" {
+		_, err := strconv.ParseInt(val, 10, 32)
+		if err != nil {
+			return fmt.Errorf("invalid DatasetGID: %s", val)
 		}
 	}
 
@@ -2001,6 +2019,25 @@ func parseFilesystemSetpermOptions(parameters map[string]string, mountpoint stri
 	// Group
 	if val, ok := parameters[paramDatasetGroup]; ok && val != "" {
 		opts.Group = val
+	}
+
+	// UID
+	if val, ok := parameters[paramDatasetUID]; ok && val != "" {
+		i, err := strconv.ParseInt(val, 10, 32)
+		if err == nil {
+			opts.Uid = int32(i)
+			// clear User, the UID has more priority than the name
+			opts.User = ""
+		}
+	}
+	// GID
+	if val, ok := parameters[paramDatasetGID]; ok && val != "" {
+		i, err := strconv.ParseInt(val, 10, 32)
+		if err == nil {
+			opts.Gid = int32(i)
+			// clear Group, the GID has more priority than the name
+			opts.Group = ""
+		}
 	}
 
 	// We don't need these Options for now
