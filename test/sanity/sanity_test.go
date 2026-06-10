@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/truenas/truenas-csi/pkg/driver"
 	sanity "github.com/kubernetes-csi/csi-test/v5/pkg/sanity"
+	"github.com/truenas/truenas-csi/pkg/driver"
 	"k8s.io/klog/v2/textlogger"
 )
 
@@ -219,6 +219,74 @@ func TestSanityNVMeOF(t *testing.T) {
 	sanityConfig.TestVolumeParameters = map[string]string{
 		"protocol": "nvmeof",
 	}
+
+	sanity.Test(t, sanityConfig)
+
+	cancel()
+	drv.Stop()
+}
+
+// TestSanityNVMeOFDHCHAP runs the sanity suite for NVMe-oF with DH-CHAP auth.
+// Requires root and TrueNAS 25.10+. Set TRUENAS_TEST_NVMEOF_HOSTNQN and
+// TRUENAS_TEST_NVMEOF_DHCHAP_KEY (optionally TRUENAS_TEST_NVMEOF_DHCHAP_CTRL_KEY
+// for mutual auth). Generate a key with: nvme gen-dhchap-key
+func TestSanityNVMeOFDHCHAP(t *testing.T) {
+	if os.Getenv("TRUENAS_URL") == "" {
+		t.Skip("Skipping NVMe-oF DH-CHAP sanity test: TRUENAS_URL not set")
+	}
+	if os.Geteuid() != 0 {
+		t.Skip("Skipping NVMe-oF DH-CHAP sanity test: requires root privileges")
+	}
+	hostNQN := os.Getenv("TRUENAS_TEST_NVMEOF_HOSTNQN")
+	dhchapKey := os.Getenv("TRUENAS_TEST_NVMEOF_DHCHAP_KEY")
+	if hostNQN == "" || dhchapKey == "" {
+		t.Skip("Skipping NVMe-oF DH-CHAP sanity test: set TRUENAS_TEST_NVMEOF_HOSTNQN and TRUENAS_TEST_NVMEOF_DHCHAP_KEY")
+	}
+
+	tmpDir, err := os.MkdirTemp("", "csi-sanity-nvmeof-dhchap-")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	endpoint := filepath.Join(tmpDir, "csi.sock")
+	targetPath := filepath.Join(tmpDir, "target")
+	stagingPath := filepath.Join(tmpDir, "staging")
+
+	config := buildTestConfig(endpoint)
+
+	drv, err := driver.NewDriver(config)
+	if err != nil {
+		t.Fatalf("Failed to create driver: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- drv.Run(ctx)
+	}()
+
+	if err := waitForSocket(endpoint, driverStartTimeout); err != nil {
+		t.Fatalf("Driver failed to start: %v", err)
+	}
+
+	sanityConfig := sanity.NewTestConfig()
+	sanityConfig.Address = "unix://" + endpoint
+	sanityConfig.TargetPath = targetPath
+	sanityConfig.StagingPath = stagingPath
+	sanityConfig.TestVolumeSize = 1 * 1024 * 1024 * 1024
+
+	params := map[string]string{
+		"protocol":         "nvmeof",
+		"nvmeof.hostNQN":   hostNQN,
+		"nvmeof.dhchapKey": dhchapKey,
+	}
+	if ctrl := os.Getenv("TRUENAS_TEST_NVMEOF_DHCHAP_CTRL_KEY"); ctrl != "" {
+		params["nvmeof.dhchapCtrlKey"] = ctrl
+	}
+	sanityConfig.TestVolumeParameters = params
 
 	sanity.Test(t, sanityConfig)
 
