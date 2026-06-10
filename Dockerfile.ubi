@@ -29,12 +29,15 @@ RUN dnf install -y --setopt=install_weak_deps=False \
     xfsprogs \
     && dnf clean all
 
-# Stage the nvme binary and its non-core shared libraries (all live in /usr/lib64:
-# libnvme, libjson-c, and the crypto libs DH-CHAP needs) so we don't have to
-# enumerate each by hand. Core libs (/lib64 glibc, ld) are intentionally excluded.
+# Stage the nvme binary and its shared libraries (libnvme, libjson-c, crypto, ...)
+# without enumerating each by hand. ldd may report libs under /lib64 or /usr/lib64
+# (the former is a symlink to the latter), so copy all resolved deps except the
+# glibc core that ubi-minimal already provides, into /usr/lib64.
 RUN mkdir -p /nvme-deps/usr/lib64 \
     && cp -L /usr/sbin/nvme /nvme-deps/nvme \
-    && ldd /usr/sbin/nvme | awk '/=> \/usr\/lib64/{print $3}' | xargs -I{} cp -L {} /nvme-deps/usr/lib64/
+    && ldd /usr/sbin/nvme | awk '/=>/ {print $3}' \
+       | grep -vE '/(ld-linux-x86-64|libc|libm|libmvec|libpthread|libdl|librt|libresolv|libanl)\.so' \
+       | xargs -I{} cp -L {} /nvme-deps/usr/lib64/
 
 # Stage 3: Final UBI-based image for Red Hat certification
 FROM registry.access.redhat.com/ubi10/ubi-minimal:latest
