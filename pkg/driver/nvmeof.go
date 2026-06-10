@@ -337,8 +337,8 @@ func nvmeControllerForDevice(devicePath string) string {
 	if sep <= 0 {
 		return ""
 	}
-	ctrlNum := rest[:sep]   // "0"
-	nsNum := rest[sep+1:]   // "1"
+	ctrlNum := rest[:sep] // "0"
+	nsNum := rest[sep+1:] // "1"
 	if !isAllDigits(ctrlNum) || !isAllDigits(nsNum) {
 		return ""
 	}
