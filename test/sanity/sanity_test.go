@@ -1,6 +1,7 @@
 package sanity
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"os"
@@ -8,8 +9,11 @@ import (
 	"testing"
 	"time"
 
+	csi "github.com/container-storage-interface/spec/lib/go/csi"
 	sanity "github.com/kubernetes-csi/csi-test/v5/pkg/sanity"
 	"github.com/truenas/truenas-csi/pkg/driver"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
 	"k8s.io/klog/v2/textlogger"
 )
 
@@ -292,6 +296,138 @@ func TestSanityNVMeOFDHCHAP(t *testing.T) {
 
 	cancel()
 	drv.Stop()
+}
+
+// TestNVMeOFBlockVolume exercises the raw block-volume path (not covered by the
+// mount-based sanity suite): provision an NVMe-oF volume with Block access type,
+// stage + publish it as a raw device, and verify the published target is a real
+// block device that accepts read/write. Requires root and TrueNAS 25.10+.
+func TestNVMeOFBlockVolume(t *testing.T) {
+	if os.Getenv("TRUENAS_URL") == "" {
+		t.Skip("Skipping NVMe-oF block test: TRUENAS_URL not set")
+	}
+	if os.Geteuid() != 0 {
+		t.Skip("Skipping NVMe-oF block test: requires root privileges")
+	}
+
+	tmpDir, err := os.MkdirTemp("", "csi-nvmeof-block-")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	endpoint := filepath.Join(tmpDir, "csi.sock")
+	stagingPath := filepath.Join(tmpDir, "staging")
+	targetPath := filepath.Join(tmpDir, "block-target") // a file for block bind-mount
+
+	config := buildTestConfig(endpoint)
+	drv, err := driver.NewDriver(config)
+	if err != nil {
+		t.Fatalf("Failed to create driver: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() { _ = drv.Run(ctx) }()
+	if err := waitForSocket(endpoint, driverStartTimeout); err != nil {
+		t.Fatalf("Driver failed to start: %v", err)
+	}
+	defer drv.Stop()
+
+	conn, err := grpc.NewClient("unix://"+endpoint, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		t.Fatalf("Failed to dial driver: %v", err)
+	}
+	defer conn.Close()
+	cc := csi.NewControllerClient(conn)
+	nc := csi.NewNodeClient(conn)
+
+	tctx := context.Background()
+	blockCap := &csi.VolumeCapability{
+		AccessType: &csi.VolumeCapability_Block{Block: &csi.VolumeCapability_BlockVolume{}},
+		AccessMode: &csi.VolumeCapability_AccessMode{Mode: csi.VolumeCapability_AccessMode_SINGLE_NODE_WRITER},
+	}
+
+	ni, err := nc.NodeGetInfo(tctx, &csi.NodeGetInfoRequest{})
+	if err != nil {
+		t.Fatalf("NodeGetInfo: %v", err)
+	}
+
+	cv, err := cc.CreateVolume(tctx, &csi.CreateVolumeRequest{
+		Name:               "sanity-nvmeof-block",
+		CapacityRange:      &csi.CapacityRange{RequiredBytes: 1 << 30},
+		VolumeCapabilities: []*csi.VolumeCapability{blockCap},
+		Parameters:         map[string]string{"protocol": "nvmeof"},
+	})
+	if err != nil {
+		t.Fatalf("CreateVolume(block): %v", err)
+	}
+	volID := cv.Volume.VolumeId
+	volCtx := cv.Volume.VolumeContext
+	defer func() { _, _ = cc.DeleteVolume(tctx, &csi.DeleteVolumeRequest{VolumeId: volID}) }()
+
+	cp, err := cc.ControllerPublishVolume(tctx, &csi.ControllerPublishVolumeRequest{
+		VolumeId: volID, NodeId: ni.NodeId, VolumeCapability: blockCap,
+	})
+	if err != nil {
+		t.Fatalf("ControllerPublishVolume: %v", err)
+	}
+	defer func() {
+		_, _ = cc.ControllerUnpublishVolume(tctx, &csi.ControllerUnpublishVolumeRequest{VolumeId: volID, NodeId: ni.NodeId})
+	}()
+
+	if _, err := nc.NodeStageVolume(tctx, &csi.NodeStageVolumeRequest{
+		VolumeId: volID, StagingTargetPath: stagingPath, VolumeCapability: blockCap,
+		PublishContext: cp.PublishContext, VolumeContext: volCtx,
+	}); err != nil {
+		t.Fatalf("NodeStageVolume(block): %v", err)
+	}
+	defer func() {
+		_, _ = nc.NodeUnstageVolume(tctx, &csi.NodeUnstageVolumeRequest{VolumeId: volID, StagingTargetPath: stagingPath})
+	}()
+
+	if _, err := nc.NodePublishVolume(tctx, &csi.NodePublishVolumeRequest{
+		VolumeId: volID, StagingTargetPath: stagingPath, TargetPath: targetPath,
+		VolumeCapability: blockCap, PublishContext: cp.PublishContext, VolumeContext: volCtx,
+	}); err != nil {
+		t.Fatalf("NodePublishVolume(block): %v", err)
+	}
+	defer func() {
+		_, _ = nc.NodeUnpublishVolume(tctx, &csi.NodeUnpublishVolumeRequest{VolumeId: volID, TargetPath: targetPath})
+	}()
+
+	// The published target must be a real block device.
+	fi, err := os.Stat(targetPath)
+	if err != nil {
+		t.Fatalf("stat block target: %v", err)
+	}
+	if fi.Mode()&os.ModeDevice == 0 || fi.Mode()&os.ModeCharDevice != 0 {
+		t.Fatalf("target %s is not a block device (mode=%v)", targetPath, fi.Mode())
+	}
+
+	// Write and read back a page to prove the raw device is usable (page-sized
+	// buffer avoids block-device alignment constraints).
+	const pageSize = 4096
+	want := make([]byte, pageSize)
+	copy(want, []byte("truenas-csi-nvmeof-block-readwrite-check"))
+	f, err := os.OpenFile(targetPath, os.O_RDWR, 0)
+	if err != nil {
+		t.Fatalf("open block device: %v", err)
+	}
+	defer f.Close()
+	if _, err := f.WriteAt(want, 0); err != nil {
+		t.Fatalf("write to block device: %v", err)
+	}
+	_ = f.Sync()
+	got := make([]byte, pageSize)
+	if _, err := f.ReadAt(got, 0); err != nil {
+		t.Fatalf("read from block device: %v", err)
+	}
+	if !bytes.Equal(got, want) {
+		t.Fatalf("block device read-back mismatch")
+	}
+
+	t.Logf("NVMe-oF block volume OK: %s is a block device, write/read verified", targetPath)
 }
 
 // buildTestConfig creates a DriverConfig from environment variables.
