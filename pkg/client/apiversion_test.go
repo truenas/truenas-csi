@@ -3,6 +3,7 @@ package client
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -100,39 +101,40 @@ func TestFetchSupportedAPIVersions_HTTPError(t *testing.T) {
 }
 
 func TestVerifyAndPinAPIVersion(t *testing.T) {
-	t.Run("supported pins URL", func(t *testing.T) {
-		_, wsURL := newVersionsServer(t, []string{"v25.04.0", APIVersion}, http.StatusOK)
+	wantSuffix := apiPathPrefix + apiVersionCurrent // always connect to /api/current
+
+	t.Run("min supported -> connects to current", func(t *testing.T) {
+		_, wsURL := newVersionsServer(t, []string{"v25.04.0", MinAPIVersion}, http.StatusOK)
 		c := New(Config{URL: wsURL})
 		if err := c.verifyAndPinAPIVersion(context.Background()); err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		wantSuffix := apiPathPrefix + APIVersion
 		if !strings.HasSuffix(c.config.URL, wantSuffix) {
 			t.Errorf("URL = %q, want suffix %q", c.config.URL, wantSuffix)
 		}
 	})
 
-	t.Run("unsupported fails fast", func(t *testing.T) {
+	t.Run("below minimum fails fast", func(t *testing.T) {
 		_, wsURL := newVersionsServer(t, []string{"v25.04.0", "v25.04.1"}, http.StatusOK)
 		c := New(Config{URL: wsURL})
 		err := c.verifyAndPinAPIVersion(context.Background())
 		if err == nil {
 			t.Fatal("expected ErrUnsupportedAPIVersion")
 		}
-		if !strings.Contains(err.Error(), "not supported") && !strings.Contains(err.Error(), "not advertised") {
+		if !errors.Is(err, ErrUnsupportedAPIVersion) {
 			t.Errorf("unexpected error: %v", err)
 		}
 	})
 
-	t.Run("fetch failure proceeds with pinned version", func(t *testing.T) {
-		// Point at a closed port so the GET fails; verify it still pins the URL.
+	t.Run("fetch failure proceeds with current", func(t *testing.T) {
+		// Point at a closed port so the GET fails; verify it still pins to current.
 		srv, wsURL := newVersionsServer(t, nil, http.StatusOK)
 		srv.Close() // close immediately so the request fails
 		c := New(Config{URL: wsURL})
 		if err := c.verifyAndPinAPIVersion(context.Background()); err != nil {
 			t.Fatalf("expected nil (graceful fallback), got %v", err)
 		}
-		if !strings.HasSuffix(c.config.URL, apiPathPrefix+APIVersion) {
+		if !strings.HasSuffix(c.config.URL, wantSuffix) {
 			t.Errorf("URL not pinned on fallback: %q", c.config.URL)
 		}
 	})

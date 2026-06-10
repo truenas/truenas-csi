@@ -9,16 +9,13 @@ import (
 	"net/url"
 )
 
-// APIVersion is the TrueNAS versioned JSON-RPC API this client targets. The client
-// always connects to /api/<APIVersion>; on the initial Connect it verifies the
-// server advertises this version (via GET /api/versions) and fails fast otherwise.
-// Pinning the version keeps the available method set deterministic across TrueNAS
-// upgrades instead of riding /api/current.
-const APIVersion = "v25.10.0"
+// MinAPIVersion is the minimum TrueNAS versioned API the driver requires.
+const MinAPIVersion = "v25.10.0"
 
 const (
-	apiPathPrefix   = "/api/"
-	apiVersionsPath = "/api/versions"
+	apiPathPrefix     = "/api/"
+	apiVersionsPath   = "/api/versions"
+	apiVersionCurrent = "current"
 )
 
 // resolveAPIURL rewrites rawURL's path to /api/<version>, preserving scheme, host,
@@ -102,26 +99,31 @@ func versionSupported(supported []string, target string) bool {
 // verifies the server advertises it. If the supported-versions list cannot be
 // fetched (server temporarily unavailable), it proceeds with the pinned version
 // so the reconnect logic can take over instead of crash-looping.
+// verifyAndPinAPIVersion points the client at /api/current (the server's native
+// API, which avoids TrueNAS's unreliable older-version compat adapter) after
+// confirming the server advertises at least MinAPIVersion. A failed preflight is
+// non-fatal: it proceeds with /api/current so the reconnect logic can take over.
 func (c *Client) verifyAndPinAPIVersion(ctx context.Context) error {
-	resolved, err := resolveAPIURL(c.config.URL, APIVersion)
+	resolved, err := resolveAPIURL(c.config.URL, apiVersionCurrent)
 	if err != nil {
 		return err
 	}
 
 	supported, ferr := fetchSupportedAPIVersions(ctx, c.config.URL, c.config.TLSConfig)
 	if ferr != nil {
-		c.log.V(logLevelInfo).Info("Could not fetch supported TrueNAS API versions; proceeding with pinned version (reconnect will retry if the server is unavailable)",
-			"pinnedVersion", APIVersion, "error", ferr)
+		c.log.V(logLevelInfo).Info("Could not fetch supported TrueNAS API versions; proceeding with /api/current (reconnect will retry if the server is unavailable)",
+			"error", ferr)
 		c.config.URL = resolved
 		return nil
 	}
 
-	if !versionSupported(supported, APIVersion) {
-		return fmt.Errorf("%w: %s not advertised by TrueNAS (supported: %v); upgrade TrueNAS or use a driver build targeting a supported version",
-			ErrUnsupportedAPIVersion, APIVersion, supported)
+	if !versionSupported(supported, MinAPIVersion) {
+		return fmt.Errorf("%w: server does not advertise the minimum required version %s (supported: %v); upgrade TrueNAS",
+			ErrUnsupportedAPIVersion, MinAPIVersion, supported)
 	}
 
-	c.log.V(logLevelInfo).Info("Verified TrueNAS supports the pinned API version", "apiVersion", APIVersion, "supported", supported)
+	c.log.V(logLevelInfo).Info("Verified TrueNAS meets the minimum API version; connecting to /api/current",
+		"minVersion", MinAPIVersion, "supported", supported)
 	c.config.URL = resolved
 	return nil
 }
