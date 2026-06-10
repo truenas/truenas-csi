@@ -80,21 +80,20 @@ const (
 
 	// NVMe-oF publish context keys. DH-CHAP credentials are NOT carried here;
 	// they ride the volume context (StorageClass parameters), like iSCSI CHAP.
-	PublishContextNVMeSubNQN     = "nvmeSubNQN"
-	PublishContextNVMePortAddr   = "nvmePortAddr"
-	PublishContextNVMePortSvcID  = "nvmePortSvcID"
-	PublishContextNVMeTransport  = "nvmeTransport"
-	PublishContextNVMeNSUUID     = "nvmeNamespaceUUID"
+	PublishContextNVMeSubNQN    = "nvmeSubNQN"
+	PublishContextNVMePortAddr  = "nvmePortAddr"
+	PublishContextNVMePortSvcID = "nvmePortSvcID"
+	PublishContextNVMeTransport = "nvmeTransport"
+	PublishContextNVMeNSUUID    = "nvmeNamespaceUUID"
 )
 
 // VolumeInfo holds metadata about a provisioned volume
 type VolumeInfo struct {
-	ID                 string
-	Name               string
-	CapacityBytes      int64
-	VolumeContext      map[string]string
-	ContentSource      *csi.VolumeContentSource
-	AccessibleTopology []*csi.Topology
+	ID            string
+	Name          string
+	CapacityBytes int64
+	VolumeContext map[string]string
+	ContentSource *csi.VolumeContentSource
 
 	DatasetPath string
 	PoolName    string
@@ -212,17 +211,17 @@ type Driver struct {
 	log    logr.Logger
 	client *client.Client
 
-	defaultPool    string
-	nfsServer      string
-	iscsiPortal    string
-	iscsiPortalID  int
-	iscsiIQNBase   string
+	defaultPool   string
+	nfsServer     string
+	iscsiPortal   string
+	iscsiPortalID int
+	iscsiIQNBase  string
 
 	// NVMe-oF portal (host:port for the NVMe/TCP listener) and the resolved
 	// shared port ID. nvmeBaseNQN is TrueNAS's global base NQN (informational).
-	nvmeofPortal  string
-	nvmeofPortID  int
-	nvmeBaseNQN   string
+	nvmeofPortal string
+	nvmeofPortID int
+	nvmeBaseNQN  string
 
 	identityServer   csi.IdentityServer
 	controllerServer csi.ControllerServer

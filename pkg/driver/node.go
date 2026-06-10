@@ -370,10 +370,12 @@ func (s *NodeServer) NodeGetInfo(ctx context.Context, req *csi.NodeGetInfoReques
 	return &csi.NodeGetInfoResponse{
 		NodeId: s.driver.NodeID(),
 		// MaxVolumesPerNode: 0 means no limit
+		// No pool-based topology: TrueNAS storage (NFS/iSCSI/NVMe-oF) is
+		// network-attached and reachable from every node, so volumes must not be
+		// constrained to a pool's node label. Only the per-node key is advertised.
 		AccessibleTopology: &csi.Topology{
 			Segments: map[string]string{
 				"topology.truenas.io/node": s.driver.NodeID(),
-				"topology.truenas.io/pool": s.driver.DefaultPool(),
 			},
 		},
 	}, nil

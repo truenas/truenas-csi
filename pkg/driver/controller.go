@@ -64,27 +64,27 @@ const (
 
 // StorageClass parameter keys
 const (
-	paramProtocol    = "protocol"
-	paramPool        = "pool"
-	paramDatasetPath = "datasetPath"
-	paramCompression = "compression"
+	paramProtocol     = "protocol"
+	paramPool         = "pool"
+	paramDatasetPath  = "datasetPath"
+	paramCompression  = "compression"
 	paramSync         = "sync"
 	paramVolBlockSize = "volblocksize"
 	paramSparse       = "sparse"
 
 	// iSCSI parameters
-	paramISCSIBlockSize  = "iscsi.blocksize"
-	paramISCSIIQNBase    = "iscsi.iqn-base"
-	paramISCSIIQNPrefix  = "iscsi.iqn-prefix"
-	paramISCSIChapUser   = "iscsi.chapUser"
-	paramISCSIChapSecret = "iscsi.chapSecret"
+	paramISCSIBlockSize      = "iscsi.blocksize"
+	paramISCSIIQNBase        = "iscsi.iqn-base"
+	paramISCSIIQNPrefix      = "iscsi.iqn-prefix"
+	paramISCSIChapUser       = "iscsi.chapUser"
+	paramISCSIChapSecret     = "iscsi.chapSecret"
 	paramISCSIChapPeerUser   = "iscsi.chapPeerUser"
 	paramISCSIChapPeerSecret = "iscsi.chapPeerSecret"
 	paramISCSIInitiators     = "iscsi.initiators"
 
 	// iSCSI auth types
-	iscsiAuthTypeCHAP    = "chap"
-	iscsiAuthTypeMutual  = "CHAP_MUTUAL"
+	iscsiAuthTypeCHAP   = "chap"
+	iscsiAuthTypeMutual = "CHAP_MUTUAL"
 
 	// NVMe-oF parameters. DH-CHAP credentials are plaintext StorageClass params
 	// (like iSCSI CHAP) and flow to the node via the volume context.
@@ -102,12 +102,12 @@ const (
 	paramDeleteExtentsWithTarget = "deleteExtentsWithTarget"
 
 	// Encryption parameters
-	paramEncryption             = "encryption"
-	paramEncryptionAlgorithm    = "encryption.algorithm"
-	paramEncryptionPassphrase   = "encryption.passphrase"
-	paramEncryptionKey          = "encryption.key"
-	paramEncryptionGenerateKey  = "encryption.generateKey"
-	paramEncryptionPBKDF2Iters  = "encryption.pbkdf2iters"
+	paramEncryption            = "encryption"
+	paramEncryptionAlgorithm   = "encryption.algorithm"
+	paramEncryptionPassphrase  = "encryption.passphrase"
+	paramEncryptionKey         = "encryption.key"
+	paramEncryptionGenerateKey = "encryption.generateKey"
+	paramEncryptionPBKDF2Iters = "encryption.pbkdf2iters"
 
 	// Snapshot parameters
 	paramSnapshotSchedule      = "snapshot.schedule"
@@ -118,7 +118,7 @@ const (
 )
 
 const (
-	_ = iota
+	_   = iota
 	KiB = 1 << (10 * iota)
 	MiB
 	GiB
@@ -437,10 +437,6 @@ func (s *ControllerServer) CreateVolume(ctx context.Context, req *csi.CreateVolu
 		},
 	}
 
-	if volInfo.AccessibleTopology != nil {
-		resp.Volume.AccessibleTopology = volInfo.AccessibleTopology
-	}
-
 	s.driver.Log().V(LogLevelDebug).Info("Volume created successfully", "volumeId", volumeID)
 	return resp, nil
 }
@@ -550,13 +546,6 @@ func (s *ControllerServer) createNFSVolume(ctx context.Context, volumeID, datase
 		NFSPath:       mountpoint,
 		NFSShareID:    share.ID,
 		VolumeContext: parameters,
-		AccessibleTopology: []*csi.Topology{
-			{
-				Segments: map[string]string{
-					"topology.truenas.io/pool": pool,
-				},
-			},
-		},
 	}
 
 	if s.driver.NFSServer() != "" {
@@ -818,9 +807,6 @@ func (s *ControllerServer) createNVMeOFVolume(ctx context.Context, volumeID, dat
 		NVMeHostID:        hostID,
 		NVMeHostSubsysID:  hostSubsysID,
 		VolumeContext:     parameters,
-		AccessibleTopology: []*csi.Topology{
-			{Segments: map[string]string{"topology.truenas.io/pool": pool}},
-		},
 	}
 	s.driver.Log().V(LogLevelDebug).Info("Created NVMe-oF volume", "volumeId", volumeID, "subNQN", subsys.SubNQN, "nsUUID", ns.DeviceUUID)
 	return volInfo, nil
@@ -1212,13 +1198,6 @@ func (s *ControllerServer) createISCSIVolume(ctx context.Context, volumeID, data
 		ISCSIAuthID:      authID,
 		ISCSIInitiatorID: initiatorID,
 		VolumeContext:    parameters,
-		AccessibleTopology: []*csi.Topology{
-			{
-				Segments: map[string]string{
-					"topology.truenas.io/pool": pool,
-				},
-			},
-		},
 	}
 
 	volInfo.VolumeContext[PublishContextTargetPortal] = s.driver.ISCSIPortal()
@@ -1547,13 +1526,6 @@ func (s *ControllerServer) createISCSITargetForClone(ctx context.Context, volume
 		ISCSITargetID: target.ID,
 		ISCSIExtentID: extent.ID,
 		VolumeContext: parameters,
-		AccessibleTopology: []*csi.Topology{
-			{
-				Segments: map[string]string{
-					"topology.truenas.io/pool": pool,
-				},
-			},
-		},
 	}
 
 	volInfo.VolumeContext[PublishContextTargetPortal] = s.driver.ISCSIPortal()
@@ -1634,9 +1606,6 @@ func (s *ControllerServer) createNVMeOFTargetForClone(ctx context.Context, volum
 		NVMeHostID:        hostID,
 		NVMeHostSubsysID:  hostSubsysID,
 		VolumeContext:     parameters,
-		AccessibleTopology: []*csi.Topology{
-			{Segments: map[string]string{"topology.truenas.io/pool": pool}},
-		},
 	}
 	return volInfo, nil
 }
@@ -1983,14 +1952,8 @@ func (s *ControllerServer) GetCapacity(ctx context.Context, req *csi.GetCapacity
 
 	pool := s.driver.DefaultPool()
 
-	// Check topology constraints first
-	if req.AccessibleTopology != nil {
-		if topologyPool, ok := req.AccessibleTopology.Segments["topology.truenas.io/pool"]; ok {
-			pool = topologyPool
-		}
-	}
-
-	// Parameters can override topology
+	// Pool comes from the StorageClass parameter (storage is network-attached, so
+	// there is no pool-based topology constraint).
 	if req.Parameters != nil {
 		if p, ok := req.Parameters["pool"]; ok {
 			pool = p
