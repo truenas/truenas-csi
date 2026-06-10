@@ -125,6 +125,11 @@ spec:
                   type: string
                 description: NodeSelector for the CSI node pods
                 type: object
+              nvmeofPortal:
+                description: |-
+                  NVMeOFPortal is the NVMe-oF/TCP portal address in the format "ip:port" (e.g., "192.168.1.100:4420")
+                  Optional; auto-derived from the TrueNAS URL host (port 4420) if omitted
+                type: string
               tolerations:
                 description: Tolerations for the CSI node pods
                 items:
