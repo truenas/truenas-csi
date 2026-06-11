@@ -14,7 +14,7 @@ FROM alpine:3.19
 # PVCs with allowVolumeExpansion=true). Without the -extra packages the driver
 # returns "executable file not found in $PATH" on every fresh mount and
 # silently fails to grow the filesystem on PVC expansion. See issue #25.
-RUN apk add --no-cache ca-certificates nfs-utils open-iscsi \
+RUN apk add --no-cache ca-certificates nfs-utils open-iscsi nvme-cli \
     e2fsprogs e2fsprogs-extra xfsprogs xfsprogs-extra util-linux
 COPY --from=builder /build/truenas-csi-driver /truenas-csi-driver
 ENTRYPOINT ["/truenas-csi-driver"]

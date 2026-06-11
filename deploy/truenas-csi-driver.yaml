@@ -157,11 +157,12 @@ metadata:
   name: truenas-csi-config
   namespace: truenas-csi
 data:
-  truenasURL: "wss://YOUR-TRUENAS-IP/api/current"
+  truenasURL: "wss://YOUR-TRUENAS-IP"
   truenasInsecure: "true"  # Set to "true" for self-signed certificates, "false" or remove for valid certs
   defaultPool: "tank"
   nfsServer: "YOUR-TRUENAS-IP"
   iscsiPortal: "YOUR-TRUENAS-IP:3260"
+  nvmeofPortal: "YOUR-TRUENAS-IP:4420"  # Optional: NVMe-oF portal; auto-derived from truenasURL host if omitted
   iscsiIQNBase: "iqn.2000-01.io.truenas"  # Optional: Custom IQN prefix (default: iqn.2000-01.io.truenas)
 
 ---
@@ -221,6 +222,12 @@ spec:
                 configMapKeyRef:
                   name: truenas-csi-config
                   key: iscsiPortal
+            - name: TRUENAS_NVMEOF_PORTAL
+              valueFrom:
+                configMapKeyRef:
+                  name: truenas-csi-config
+                  key: nvmeofPortal
+                  optional: true
             - name: TRUENAS_ISCSI_IQN_BASE
               valueFrom:
                 configMapKeyRef:
@@ -364,7 +371,7 @@ spec:
           lifecycle:
             postStart:
               exec:
-                command: ["/bin/sh", "-c", "mkdir -p /run/lock/iscsi && mv /usr/sbin/iscsiadm /usr/sbin/iscsiadm.orig 2>/dev/null; printf '#!/bin/sh\\nnsenter --mount=/host/proc/1/ns/mnt -- /usr/sbin/iscsiadm \"$@\"\\n' > /usr/sbin/iscsiadm && chmod +x /usr/sbin/iscsiadm"]
+                command: ["/bin/sh", "-c", "mkdir -p /run/lock/iscsi && mv /usr/sbin/iscsiadm /usr/sbin/iscsiadm.orig 2>/dev/null; printf '#!/bin/sh\\nnsenter --mount=/host/proc/1/ns/mnt -- /usr/sbin/iscsiadm \"$@\"\\n' > /usr/sbin/iscsiadm && chmod +x /usr/sbin/iscsiadm; modprobe nvme_tcp 2>/dev/null; modprobe nvme_fabrics 2>/dev/null"]
           securityContext:
             privileged: true
           args:
@@ -401,6 +408,12 @@ spec:
                 configMapKeyRef:
                   name: truenas-csi-config
                   key: iscsiPortal
+            - name: TRUENAS_NVMEOF_PORTAL
+              valueFrom:
+                configMapKeyRef:
+                  name: truenas-csi-config
+                  key: nvmeofPortal
+                  optional: true
             - name: TRUENAS_ISCSI_IQN_BASE
               valueFrom:
                 configMapKeyRef:
@@ -425,6 +438,9 @@ spec:
               mountPropagation: Bidirectional
             - name: device-dir
               mountPath: /dev
+            - name: modules-dir
+              mountPath: /lib/modules
+              readOnly: true
             - name: iscsi-dir
               mountPath: /etc/iscsi
               mountPropagation: Bidirectional
@@ -494,6 +510,10 @@ spec:
         - name: device-dir
           hostPath:
             path: /dev
+        - name: modules-dir
+          hostPath:
+            path: /lib/modules
+            type: Directory
         - name: iscsi-dir
           hostPath:
             path: /etc/iscsi

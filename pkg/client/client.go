@@ -50,10 +50,11 @@ const (
 
 // Sentinel errors
 var (
-	ErrNotConnected = errors.New("truenas: not connected")
-	ErrAuthFailed   = errors.New("truenas: authentication failed")
-	ErrClosed       = errors.New("truenas: client closed")
-	ErrNotFound     = errors.New("truenas: resource not found")
+	ErrNotConnected          = errors.New("truenas: not connected")
+	ErrAuthFailed            = errors.New("truenas: authentication failed")
+	ErrClosed                = errors.New("truenas: client closed")
+	ErrNotFound              = errors.New("truenas: resource not found")
+	ErrUnsupportedAPIVersion = errors.New("truenas: required API version not supported by server")
 )
 
 // Config holds configuration for the TrueNAS client.
@@ -184,6 +185,9 @@ type Client struct {
 	// Reconnection guard
 	reconnecting atomic.Bool
 
+	// apiVersionPinned ensures the API version is resolved/verified only once.
+	apiVersionPinned atomic.Bool
+
 	// Concurrency limiter for WebSocket calls
 	callSem *semaphore.Weighted
 }
@@ -237,6 +241,16 @@ func New(cfg Config) *Client {
 func (c *Client) Connect(ctx context.Context) error {
 	if c.Connected() {
 		return nil
+	}
+
+	// Resolve and verify the pinned API version once, before the initial dial.
+	// A genuinely unsupported version fails fast (not a transient error); a failed
+	// preflight falls through to the pinned version so reconnect logic can retry.
+	if c.apiVersionPinned.CompareAndSwap(false, true) {
+		if err := c.verifyAndPinAPIVersion(ctx); err != nil {
+			c.apiVersionPinned.Store(false)
+			return err
+		}
 	}
 
 	err := c.dial(ctx)

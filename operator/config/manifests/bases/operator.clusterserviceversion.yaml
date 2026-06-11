@@ -141,6 +141,13 @@ spec:
         path: nodeSelector
         x-descriptors:
         - urn:alm:descriptor:com.tectonic.ui:selector:Node
+      - description: |-
+          NVMeOFPortal is the NVMe-oF/TCP portal address in the format "ip:port" (e.g., "192.168.1.100:4420")
+          Optional; auto-derived from the TrueNAS URL host (port 4420) if omitted
+        displayName: NVMe-oF Portal
+        path: nvmeofPortal
+        x-descriptors:
+        - urn:alm:descriptor:com.tectonic.ui:text
       - description: Tolerations for the CSI node pods
         displayName: Tolerations
         path: tolerations

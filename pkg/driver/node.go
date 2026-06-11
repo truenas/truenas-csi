@@ -16,11 +16,12 @@ import (
 
 // NodeServer implements the CSI Node service
 type NodeServer struct {
-	driver       *Driver
-	mounter      mount.Interface
-	iscsiHandler *ISCSIHandler
-	nfsHandler   *NFSHandler
-	volumeLocks  sync.Map // map[string]*sync.Mutex - per-operation locks
+	driver        *Driver
+	mounter       mount.Interface
+	iscsiHandler  *ISCSIHandler
+	nvmeofHandler *NVMeOFHandler
+	nfsHandler    *NFSHandler
+	volumeLocks   sync.Map // map[string]*sync.Mutex - per-operation locks
 	csi.UnimplementedNodeServer
 }
 
@@ -52,11 +53,17 @@ func NewNodeServer(cfg *NodeServerConfig) (*NodeServer, error) {
 		return nil, fmt.Errorf("failed to create iSCSI handler: %w", err)
 	}
 
+	nvmeofHandler, err := NewNVMeOFHandler(safeMounter, cfg.Driver.Log())
+	if err != nil {
+		return nil, fmt.Errorf("failed to create NVMe-oF handler: %w", err)
+	}
+
 	return &NodeServer{
-		driver:       cfg.Driver,
-		mounter:      mounter,
-		iscsiHandler: iscsiHandler,
-		nfsHandler:   NewNFSHandler(mounter, cfg.Driver.Log()),
+		driver:        cfg.Driver,
+		mounter:       mounter,
+		iscsiHandler:  iscsiHandler,
+		nvmeofHandler: nvmeofHandler,
+		nfsHandler:    NewNFSHandler(mounter, cfg.Driver.Log()),
 	}, nil
 }
 
@@ -80,11 +87,26 @@ func (s *NodeServer) getHandler(publishContext map[string]string) (ProtocolHandl
 	switch publishContext[PublishContextProtocol] {
 	case ProtocolISCSI:
 		return s.iscsiHandler, nil
+	case ProtocolNVMeOF:
+		return s.nvmeofHandler, nil
 	case ProtocolNFS:
 		return s.nfsHandler, nil
 	default:
 		return nil, fmt.Errorf("unknown or missing protocol in publish context: %q", publishContext[PublishContextProtocol])
 	}
+}
+
+// handlerForVolume picks the protocol handler for Unstage/Expand, where no publish
+// context is available, by checking which connector file exists (NVMe first, then
+// iSCSI, defaulting to NFS).
+func (s *NodeServer) handlerForVolume(volumeID string) ProtocolHandler {
+	if _, err := os.Stat(nvmeConnectorPath(volumeID)); err == nil {
+		return s.nvmeofHandler
+	}
+	if _, err := os.Stat(connectorPath(volumeID)); err == nil {
+		return s.iscsiHandler
+	}
+	return s.nfsHandler
 }
 
 // validateVolumeCapability checks if the requested capability is supported
@@ -210,16 +232,8 @@ func (s *NodeServer) NodeUnstageVolume(ctx context.Context, req *csi.NodeUnstage
 	}
 	defer s.ReleaseLock(lockKey)
 
-	// Determine handler by checking if iSCSI connector file exists
-	var handler ProtocolHandler
-	cpath := connectorPath(req.VolumeId)
-	if _, err := os.Stat(cpath); err == nil {
-		// Connector file exists, this is an iSCSI volume
-		handler = s.iscsiHandler
-	} else {
-		// No connector file, assume NFS
-		handler = s.nfsHandler
-	}
+	// No publish context here — pick the handler from the connector file.
+	handler := s.handlerForVolume(req.VolumeId)
 
 	// Build unstage request
 	unstageReq := &UnstageRequest{
@@ -356,10 +370,12 @@ func (s *NodeServer) NodeGetInfo(ctx context.Context, req *csi.NodeGetInfoReques
 	return &csi.NodeGetInfoResponse{
 		NodeId: s.driver.NodeID(),
 		// MaxVolumesPerNode: 0 means no limit
+		// No pool-based topology: TrueNAS storage (NFS/iSCSI/NVMe-oF) is
+		// network-attached and reachable from every node, so volumes must not be
+		// constrained to a pool's node label. Only the per-node key is advertised.
 		AccessibleTopology: &csi.Topology{
 			Segments: map[string]string{
 				"topology.truenas.io/node": s.driver.NodeID(),
-				"topology.truenas.io/pool": s.driver.DefaultPool(),
 			},
 		},
 	}, nil
@@ -445,16 +461,9 @@ func (s *NodeServer) NodeExpandVolume(ctx context.Context, req *csi.NodeExpandVo
 		capacityBytes = req.CapacityRange.RequiredBytes
 	}
 
-	// Determine handler by checking if iSCSI connector file exists
-	var handler ProtocolHandler
-	cpath := connectorPath(req.VolumeId)
-	if _, err := os.Stat(cpath); err == nil {
-		// Connector file exists, this is an iSCSI volume
-		handler = s.iscsiHandler
-	} else {
-		// No connector file, assume NFS (expansion is a no-op for NFS)
-		handler = s.nfsHandler
-	}
+	// No publish context here — pick the handler from the connector file
+	// (expansion is a no-op for NFS).
+	handler := s.handlerForVolume(req.VolumeId)
 
 	expandReq := &ExpandRequest{
 		VolumeID:      req.VolumeId,

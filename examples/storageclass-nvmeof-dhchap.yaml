@@ -1,0 +1,31 @@
+# NVMe-oF/TCP StorageClass with DH-CHAP authentication
+# Restricts access to a specific host NQN and authenticates the connection with a
+# DH-CHAP key. The host NQN is shared by all volumes in this StorageClass; the
+# driver registers a single nvmet host for it and links each volume's subsystem.
+#
+# Generate a DH-CHAP key on any host with nvme-cli:
+#   nvme gen-dhchap-key -n <hostNQN>
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: truenas-nvmeof-secure
+provisioner: csi.truenas.io
+parameters:
+  protocol: "nvmeof"
+  compression: "LZ4"
+  volblocksize: "16K"
+  # Host NQN authorized to access volumes in this StorageClass. The node passes
+  # this via `nvme connect --hostnqn`. Required when a DH-CHAP key is set.
+  nvmeof.hostNQN: "nqn.2014-08.org.nvmexpress:uuid:0c468c4d-a385-47e0-8299-6e95aa8b1e3a"
+  # DH-CHAP host key (DHHC-1 format). Note: for production, prefer not committing
+  # secrets to StorageClasses in source control.
+  nvmeof.dhchapKey: "DHHC-1:00:MTUwz3xtbtfXLMfFi1mtABCDEF1234567890abcdefghij1234:"
+  # Mutual (bidirectional) DH-CHAP - target authenticates to host too (optional)
+  # nvmeof.dhchapCtrlKey: "DHHC-1:00:abcdef1234567890..."
+  # Hash algorithm (optional; default SHA-256): SHA-256, SHA-384, SHA-512
+  # nvmeof.dhchapHash: "SHA-256"
+  # DH group (optional): 2048-BIT, 3072-BIT, 4096-BIT, 6144-BIT, 8192-BIT
+  # nvmeof.dhchapDHGroup: "2048-BIT"
+reclaimPolicy: Delete
+volumeBindingMode: Immediate
+allowVolumeExpansion: true

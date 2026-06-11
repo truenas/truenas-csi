@@ -487,6 +487,7 @@ func (r *TrueNASCSIReconciler) reconcileConfigMap(ctx context.Context, csi *csiv
 			"defaultPool":     csi.Spec.DefaultPool,
 			"nfsServer":       csi.Spec.NFSServer,
 			"iscsiPortal":     csi.Spec.ISCSIPortal,
+			"nvmeofPortal":    csi.Spec.NVMeOFPortal,
 			"iscsiIQNBase":    csi.Spec.ISCSIIQNBase,
 			"truenasInsecure": fmt.Sprintf("%t", csi.Spec.InsecureSkipTLS),
 		}
@@ -642,14 +643,15 @@ func (r *TrueNASCSIReconciler) buildNodeContainer(image string, logLevel int32, 
 		},
 		Env: buildTrueNASEnvVars(csi),
 		// PostStart creates an iscsiadm wrapper that uses the host's iSCSI stack
-		// via nsenter. This avoids version mismatches between the container's
-		// iscsiadm/iscsid and the host's kernel iSCSI transport.
+		// via nsenter (avoiding container/host iscsiadm version mismatches), and
+		// loads the NVMe/TCP fabrics kernel modules (NVMe-oF has no host daemon, so
+		// nvme-cli runs in-container; it only needs the modules loaded).
 		Lifecycle: &corev1.Lifecycle{
 			PostStart: &corev1.LifecycleHandler{
 				Exec: &corev1.ExecAction{
 					Command: []string{
 						"/bin/sh", "-c",
-						fmt.Sprintf("mkdir -p %s && mv /usr/sbin/iscsiadm /usr/sbin/iscsiadm.orig 2>/dev/null; printf '#!/bin/sh\\nnsenter --mount=/host/proc/1/ns/mnt -- /usr/sbin/iscsiadm \"$@\"\\n' > /usr/sbin/iscsiadm && chmod +x /usr/sbin/iscsiadm", ISCSILockDir),
+						fmt.Sprintf("mkdir -p %s && mv /usr/sbin/iscsiadm /usr/sbin/iscsiadm.orig 2>/dev/null; printf '#!/bin/sh\\nnsenter --mount=/host/proc/1/ns/mnt -- /usr/sbin/iscsiadm \"$@\"\\n' > /usr/sbin/iscsiadm && chmod +x /usr/sbin/iscsiadm; modprobe nvme_tcp 2>/dev/null; modprobe nvme_fabrics 2>/dev/null", ISCSILockDir),
 					},
 				},
 			},

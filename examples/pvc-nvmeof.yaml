@@ -1,0 +1,13 @@
+# NVMe-oF/TCP PersistentVolumeClaim example
+# Creates a ReadWriteOnce block volume backed by a ZVOL, exported over NVMe/TCP.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: my-nvmeof-pvc
+spec:
+  accessModes:
+    - ReadWriteOnce  # NVMe-oF provides single-node block access
+  storageClassName: truenas-nvmeof
+  resources:
+    requests:
+      storage: 10Gi

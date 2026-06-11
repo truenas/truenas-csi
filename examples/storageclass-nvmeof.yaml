@@ -1,0 +1,19 @@
+# Basic NVMe-oF/TCP StorageClass
+# Creates ReadWriteOnce block volumes backed by ZVOLs on TrueNAS, exported over
+# NVMe over Fabrics (TCP). Requires TrueNAS SCALE 25.10+ with the NVMe-oF target
+# service enabled (System Settings -> Services -> NVMe-oF).
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: truenas-nvmeof
+provisioner: csi.truenas.io
+parameters:
+  # Storage protocol: nfs, iscsi, or nvmeof
+  protocol: "nvmeof"
+  # ZFS compression
+  compression: "LZ4"
+  # ZVOL block size: 512, 1K, 2K, 4K, 8K, 16K, 32K, 64K, 128K
+  volblocksize: "16K"
+reclaimPolicy: Delete
+volumeBindingMode: Immediate
+allowVolumeExpansion: true

@@ -40,6 +40,12 @@ type TrueNASCSISpec struct {
 	// +operator-sdk:csv:customresourcedefinitions:type=spec,displayName="iSCSI Portal",xDescriptors="urn:alm:descriptor:com.tectonic.ui:text"
 	ISCSIPortal string `json:"iscsiPortal,omitempty"`
 
+	// NVMeOFPortal is the NVMe-oF/TCP portal address in the format "ip:port" (e.g., "192.168.1.100:4420")
+	// Optional; auto-derived from the TrueNAS URL host (port 4420) if omitted
+	// +optional
+	// +operator-sdk:csv:customresourcedefinitions:type=spec,displayName="NVMe-oF Portal",xDescriptors="urn:alm:descriptor:com.tectonic.ui:text"
+	NVMeOFPortal string `json:"nvmeofPortal,omitempty"`
+
 	// ISCSIIQNBase is the base IQN for iSCSI targets (e.g., "iqn.2000-01.io.truenas")
 	// +optional
 	// +kubebuilder:default="iqn.2000-01.io.truenas"
