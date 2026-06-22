@@ -22,8 +22,8 @@ metadata:
       ]
     capabilities: Full Lifecycle
     categories: Storage
-    containerImage: quay.io/truenas_solutions/truenas-csi-operator@sha256:649ad91fcc23539237c025bb1bc9cc01efb8b1f86583c9d5dc429b4a89df0b15
-    createdAt: "2026-06-22T19:02:10Z"
+    containerImage: quay.io/truenas_solutions/truenas-csi-operator@sha256:b2fa8796028e6517b0856f6c6e806b6b53ac04ba694ce868d2872f0b83c967af
+    createdAt: "2026-06-22T20:53:33Z"
     description: Deploys and manages the TrueNAS CSI driver for dynamic volume provisioning
     features.operators.openshift.io/cnf: "false"
     features.operators.openshift.io/cni: "false"
@@ -39,10 +39,10 @@ metadata:
     operators.operatorframework.io/project_layout: go.kubebuilder.io/v4
     repository: https://github.com/truenas/truenas-csi
     support: TrueNAS
-  name: truenas-csi.v1.1.0
+  name: truenas-csi.v1.1.1
   namespace: placeholder
 spec:
-  replaces: truenas-csi.v1.0.0
+  replaces: truenas-csi.v1.1.0
   apiservicedefinitions: {}
   customresourcedefinitions:
     owned:
@@ -544,8 +544,8 @@ spec:
                       - name: LIVENESS_PROBE_IMAGE
                         value: registry.k8s.io/sig-storage/livenessprobe@sha256:7fe80915b3cb9fb1d09dbd300a0682cafa8ab93947cd3ddc3e15a8250621bf24
                       - name: DRIVER_IMAGE
-                        value: quay.io/truenas_solutions/truenas-csi@sha256:91473bb610f3e3ae453241ec90fe03b522545e719e592be6944a046bfed61403
-                    image: quay.io/truenas_solutions/truenas-csi-operator@sha256:649ad91fcc23539237c025bb1bc9cc01efb8b1f86583c9d5dc429b4a89df0b15
+                        value: quay.io/truenas_solutions/truenas-csi@sha256:7c764c16769ef741ecfc4f76b5e6727e371bcc6a7d0cd75dd58f51128a219231
+                    image: quay.io/truenas_solutions/truenas-csi-operator@sha256:b2fa8796028e6517b0856f6c6e806b6b53ac04ba694ce868d2872f0b83c967af
                     livenessProbe:
                       httpGet:
                         path: /healthz
@@ -646,9 +646,9 @@ spec:
     name: TrueNAS
     url: https://www.truenas.com
   relatedImages:
-    - image: quay.io/truenas_solutions/truenas-csi-operator@sha256:649ad91fcc23539237c025bb1bc9cc01efb8b1f86583c9d5dc429b4a89df0b15
+    - image: quay.io/truenas_solutions/truenas-csi-operator@sha256:b2fa8796028e6517b0856f6c6e806b6b53ac04ba694ce868d2872f0b83c967af
       name: truenas-csi-operator
-    - image: quay.io/truenas_solutions/truenas-csi@sha256:91473bb610f3e3ae453241ec90fe03b522545e719e592be6944a046bfed61403
+    - image: quay.io/truenas_solutions/truenas-csi@sha256:7c764c16769ef741ecfc4f76b5e6727e371bcc6a7d0cd75dd58f51128a219231
       name: truenas-csi
     - image: registry.k8s.io/sig-storage/csi-attacher@sha256:4f6b1289ffe62dbe3d2317dd938cd9dd3fb0a7c0088d505cde4effa1e0771dc2
       name: csi-attacher
@@ -662,4 +662,4 @@ spec:
       name: csi-snapshotter
     - image: registry.k8s.io/sig-storage/livenessprobe@sha256:7fe80915b3cb9fb1d09dbd300a0682cafa8ab93947cd3ddc3e15a8250621bf24
       name: livenessprobe
-  version: 1.1.0
+  version: 1.1.1
