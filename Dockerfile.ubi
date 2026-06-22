@@ -46,7 +46,7 @@ FROM registry.access.redhat.com/ubi10/ubi-minimal:latest
 # Required Red Hat certification labels
 LABEL name="truenas-csi" \
       vendor="TrueNAS" \
-      version="1.1.0" \
+      version="1.1.1" \
       release="1" \
       summary="TrueNAS CSI Driver for Kubernetes/OpenShift" \
       description="Container Storage Interface driver for TrueNAS storage systems. Supports NFS, iSCSI, and NVMe-oF protocols with snapshots, clones, and volume expansion." \
