@@ -79,7 +79,7 @@ spec:
         - name: LIVENESS_PROBE_IMAGE
           value: "registry.k8s.io/sig-storage/livenessprobe:v2.18.0"
         - name: DRIVER_IMAGE
-          value: "quay.io/truenas_solutions/truenas-csi:v1.0.0"
+          value: "quay.io/truenas_solutions/truenas-csi:v1.1.0"
         ports: []
         securityContext:
           allowPrivilegeEscalation: false

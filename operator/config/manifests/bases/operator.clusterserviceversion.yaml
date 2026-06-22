@@ -21,7 +21,7 @@ metadata:
       ]
     capabilities: Full Lifecycle
     categories: Storage
-    containerImage: quay.io/truenas_solutions/truenas-csi-operator:v0.1.0
+    containerImage: quay.io/truenas_solutions/truenas-csi-operator:v1.1.0
     createdAt: "2026-01-20T00:00:00Z"
     description: Deploys and manages the TrueNAS CSI driver for dynamic volume provisioning
     features.operators.openshift.io/cnf: "false"
