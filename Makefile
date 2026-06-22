@@ -59,7 +59,7 @@ docker-push: ## Push standard Docker image
 
 .PHONY: build-ubi
 build-ubi: ## Build UBI-based driver image for Red Hat certification
-	docker build -f Dockerfile.ubi --build-arg VERSION=$(VERSION) -t $(DRIVER_IMAGE):$(IMG_TAG) .
+	docker build --pull -f Dockerfile.ubi --provenance=false --sbom=false --build-arg VERSION=$(VERSION) -t $(DRIVER_IMAGE):$(IMG_TAG) .
 
 .PHONY: push-ubi
 push-ubi: ## Push UBI-based driver image
@@ -77,7 +77,7 @@ push-latest: ## Push all images with 'latest' tag (required for integration test
 .PHONY: operator-build
 operator-build: ## Build the UBI-based operator image for Red Hat certification
 	cp LICENSE operator/LICENSE
-	cd operator && docker build -f Dockerfile.ubi -t $(OPERATOR_IMAGE):$(IMG_TAG) .
+	cd operator && docker build --pull -f Dockerfile.ubi --provenance=false --sbom=false -t $(OPERATOR_IMAGE):$(IMG_TAG) .
 	rm -f operator/LICENSE
 
 .PHONY: operator-push
@@ -86,7 +86,7 @@ operator-push: ## Push the operator image
 
 .PHONY: bundle-build
 bundle-build: ## Build the OLM bundle image
-	cd operator && docker build -f bundle.Dockerfile -t $(BUNDLE_IMAGE):$(IMG_TAG) .
+	cd operator && docker build -f bundle.Dockerfile --provenance=false --sbom=false -t $(BUNDLE_IMAGE):$(IMG_TAG) .
 
 .PHONY: bundle-push
 bundle-push: ## Push the OLM bundle image

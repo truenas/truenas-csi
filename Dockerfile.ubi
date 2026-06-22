@@ -21,7 +21,8 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags "-X github.com/truen
 # Stage 2: Get storage packages from CentOS Stream (RHEL-compatible)
 FROM quay.io/centos/centos:stream10 AS packages
 
-RUN dnf install -y --setopt=install_weak_deps=False \
+RUN dnf -y update \
+    && dnf install -y --setopt=install_weak_deps=False \
     nfs-utils \
     iscsi-initiator-utils \
     nvme-cli \
@@ -45,7 +46,7 @@ FROM registry.access.redhat.com/ubi10/ubi-minimal:latest
 # Required Red Hat certification labels
 LABEL name="truenas-csi" \
       vendor="TrueNAS" \
-      version="1.0.0" \
+      version="1.1.0" \
       release="1" \
       summary="TrueNAS CSI Driver for Kubernetes/OpenShift" \
       description="Container Storage Interface driver for TrueNAS storage systems. Supports NFS, iSCSI, and NVMe-oF protocols with snapshots, clones, and volume expansion." \
@@ -56,7 +57,8 @@ LABEL name="truenas-csi" \
       maintainer="TrueNAS <support@truenas.com>"
 
 # Install base packages available in UBI
-RUN microdnf install -y --setopt=install_weak_deps=0 \
+RUN microdnf update -y \
+    && microdnf install -y --setopt=install_weak_deps=0 \
     ca-certificates \
     util-linux \
     procps-ng \
