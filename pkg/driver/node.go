@@ -201,6 +201,7 @@ func (s *NodeServer) NodeStageVolume(ctx context.Context, req *csi.NodeStageVolu
 		VolumeCapability: req.VolumeCapability,
 		PublishContext:   req.PublishContext,
 		VolumeContext:    req.VolumeContext,
+		Secrets:          req.GetSecrets(),
 		IsBlockVolume:    isBlockVolume,
 	}
 

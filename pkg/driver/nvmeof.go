@@ -87,9 +87,10 @@ func nvmeConnectorPath(volumeID string) string {
 }
 
 // parseNVMeOFConfig extracts NVMe-oF configuration. Connection parameters come from
-// the publish context; DH-CHAP credentials (plaintext StorageClass params) come from
-// the volume context, mirroring how iSCSI CHAP is delivered.
-func parseNVMeOFConfig(publishContext, volumeContext map[string]string) *NVMeOFConfig {
+// the publish context; DH-CHAP credentials come from the node-stage secret when
+// present, falling back to the volume context (StorageClass params) for backward
+// compatibility, mirroring how iSCSI CHAP is delivered.
+func parseNVMeOFConfig(publishContext, volumeContext, secrets map[string]string) *NVMeOFConfig {
 	transport := publishContext[PublishContextNVMeTransport]
 	if transport == "" {
 		transport = defaultNVMeOFTransport
@@ -101,8 +102,8 @@ func parseNVMeOFConfig(publishContext, volumeContext map[string]string) *NVMeOFC
 		Transport:     transport,
 		NamespaceUUID: publishContext[PublishContextNVMeNSUUID],
 		HostNQN:       volumeContext[paramNVMeOFHostNQN],
-		DHCHAPKey:     volumeContext[paramNVMeOFDHCHAPKey],
-		DHCHAPCtrlKey: volumeContext[paramNVMeOFDHCHAPCtrlKey],
+		DHCHAPKey:     secretOrParam(secrets, volumeContext, paramNVMeOFDHCHAPKey),
+		DHCHAPCtrlKey: secretOrParam(secrets, volumeContext, paramNVMeOFDHCHAPCtrlKey),
 	}
 }
 
@@ -111,7 +112,7 @@ func parseNVMeOFConfig(publishContext, volumeContext map[string]string) *NVMeOFC
 func (h *NVMeOFHandler) Stage(ctx context.Context, req *StageRequest) (*StageResult, error) {
 	h.log.V(LogLevelDebug).Info("NVMe-oF Stage", "volumeId", req.VolumeID, "stagingPath", req.StagingPath, "isBlock", req.IsBlockVolume)
 
-	config := parseNVMeOFConfig(req.PublishContext, req.VolumeContext)
+	config := parseNVMeOFConfig(req.PublishContext, req.VolumeContext, req.Secrets)
 	if config.SubNQN == "" || config.PortAddr == "" || config.PortSvcID == "" {
 		return nil, fmt.Errorf("NVMe-oF subsystem NQN and portal are required (check controller publish context)")
 	}

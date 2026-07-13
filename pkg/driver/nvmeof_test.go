@@ -60,7 +60,8 @@ func TestParseNVMeOFConfig(t *testing.T) {
 		paramNVMeOFDHCHAPCtrlKey: "DHHC-1:01:ctrl:",
 	}
 
-	cfg := parseNVMeOFConfig(publish, volume)
+	// nil secrets: exercises the volume-context (backward-compatible) path
+	cfg := parseNVMeOFConfig(publish, volume, nil)
 	if cfg.SubNQN != "nqn.2011-06.com.truenas:csi-pvc-abc" {
 		t.Errorf("SubNQN = %q", cfg.SubNQN)
 	}

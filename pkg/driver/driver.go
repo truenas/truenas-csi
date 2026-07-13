@@ -135,7 +135,11 @@ type StageRequest struct {
 	VolumeCapability *csi.VolumeCapability
 	PublishContext   map[string]string
 	VolumeContext    map[string]string
-	IsBlockVolume    bool // true for raw block volumes (no filesystem)
+	// Secrets carries the CSI node-stage secret (from the StorageClass
+	// csi.storage.k8s.io/node-stage-secret-* parameters). Used to source iSCSI
+	// CHAP login credentials without persisting them in the volume context.
+	Secrets       map[string]string
+	IsBlockVolume bool // true for raw block volumes (no filesystem)
 }
 
 // UnstageRequest contains all information needed to unstage a volume

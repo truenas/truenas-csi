@@ -84,8 +84,12 @@ func connectorPath(volumeID string) string {
 	return filepath.Join(connectorDir, fmt.Sprintf("%s.connector", sanitizeISCSIVolumeID(volumeID)))
 }
 
-// parseISCSIConfig extracts iSCSI configuration from publish and volume contexts
-func parseISCSIConfig(publishContext, volumeContext map[string]string) (*ISCSIConfig, error) {
+// parseISCSIConfig extracts iSCSI configuration from publish and volume contexts.
+// CHAP credentials are sourced from the CSI node-stage secret when present,
+// falling back to the volume context (StorageClass parameters) for backward
+// compatibility. Using a secret keeps the credentials out of the persisted
+// PersistentVolume volume context.
+func parseISCSIConfig(publishContext, volumeContext, secrets map[string]string) (*ISCSIConfig, error) {
 	config := &ISCSIConfig{
 		TargetPortal: publishContext[PublishContextTargetPortal],
 		TargetIQN:    publishContext[PublishContextTargetIQN],
@@ -100,11 +104,12 @@ func parseISCSIConfig(publishContext, volumeContext map[string]string) (*ISCSICo
 		config.LUN = int32(lun)
 	}
 
-	// CHAP credentials from volume context (StorageClass parameters)
-	config.CHAPUsername = volumeContext[paramCHAPUsername]
-	config.CHAPPassword = volumeContext[paramCHAPPassword]
-	config.CHAPUsernameIn = volumeContext[paramCHAPUsernameIn]
-	config.CHAPPasswordIn = volumeContext[paramCHAPPasswordIn]
+	// CHAP credentials from the node-stage secret or, as a fallback, the volume
+	// context (StorageClass parameters).
+	config.CHAPUsername = secretOrParam(secrets, volumeContext, paramCHAPUsername)
+	config.CHAPPassword = secretOrParam(secrets, volumeContext, paramCHAPPassword)
+	config.CHAPUsernameIn = secretOrParam(secrets, volumeContext, paramCHAPUsernameIn)
+	config.CHAPPasswordIn = secretOrParam(secrets, volumeContext, paramCHAPPasswordIn)
 
 	// Multipath and persistent sessions
 	if val := volumeContext[paramMultipathEnabled]; strings.EqualFold(val, "true") {
@@ -149,7 +154,7 @@ func (h *ISCSIHandler) Stage(ctx context.Context, req *StageRequest) (*StageResu
 	h.log.V(LogLevelDebug).Info("iSCSI Stage", "volumeId", req.VolumeID, "stagingPath", req.StagingPath, "isBlock", req.IsBlockVolume)
 
 	// Parse iSCSI configuration
-	config, err := parseISCSIConfig(req.PublishContext, req.VolumeContext)
+	config, err := parseISCSIConfig(req.PublishContext, req.VolumeContext, req.Secrets)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse iSCSI config: %w (check publish context from controller)", err)
 	}

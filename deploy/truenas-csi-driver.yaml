@@ -28,6 +28,12 @@ apiVersion: rbac.authorization.k8s.io/v1
 metadata:
   name: truenas-csi-controller-role
 rules:
+  # Required by external-provisioner to resolve the Secret referenced by the
+  # csi.storage.k8s.io/provisioner-secret-* StorageClass parameters (iSCSI CHAP
+  # secret, ZFS encryption key/passphrase).
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get", "list"]
   - apiGroups: [""]
     resources: ["persistentvolumes"]
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]

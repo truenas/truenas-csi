@@ -195,7 +195,7 @@ func (s *ControllerServer) validateVolumeCapabilities(caps []*csi.VolumeCapabili
 }
 
 // validateStorageClassParameters validates StorageClass parameters
-func (s *ControllerServer) validateStorageClassParameters(ctx context.Context, parameters map[string]string) error {
+func (s *ControllerServer) validateStorageClassParameters(ctx context.Context, parameters, secrets map[string]string) error {
 	// Validate compression algorithm
 	if val, ok := parameters[paramCompression]; ok {
 		if _, valid := ValidCompressionAlgorithms[strings.ToUpper(val)]; !valid {
@@ -212,7 +212,7 @@ func (s *ControllerServer) validateStorageClassParameters(ctx context.Context, p
 	}
 
 	// Validate NVMe-oF DH-CHAP parameters
-	if err := validateNVMeOFParameters(parameters); err != nil {
+	if err := validateNVMeOFParameters(parameters, secrets); err != nil {
 		return err
 	}
 
@@ -310,8 +310,16 @@ func (s *ControllerServer) CreateVolume(ctx context.Context, req *csi.CreateVolu
 		parameters = make(map[string]string)
 	}
 
+	// Sensitive values (iSCSI CHAP secrets, ZFS encryption keys) may be supplied
+	// via a Kubernetes Secret referenced by the csi.storage.k8s.io/provisioner-secret-*
+	// StorageClass parameters; the external-provisioner resolves the Secret and
+	// passes its data here. Values from secrets take precedence over the matching
+	// StorageClass parameter and are never written to the PersistentVolume volume
+	// context, keeping them out of the StorageClass and etcd.
+	secrets := req.GetSecrets()
+
 	// Validate StorageClass parameters
-	if err := s.validateStorageClassParameters(ctx, parameters); err != nil {
+	if err := s.validateStorageClassParameters(ctx, parameters, secrets); err != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "invalid storage class parameters: %v", err)
 	}
 
@@ -379,7 +387,7 @@ func (s *ControllerServer) CreateVolume(ctx context.Context, req *csi.CreateVolu
 
 		// Same idempotent-repair for NVMe-oF ZVOLs.
 		if existingDataset.Type == datasetTypeVolume && protocol == ProtocolNVMeOF {
-			volCtx, err := s.ensureNVMeOFChain(ctx, volumeID, datasetPath, parameters)
+			volCtx, err := s.ensureNVMeOFChain(ctx, volumeID, datasetPath, parameters, secrets)
 			if err != nil {
 				return nil, status.Errorf(codes.Internal, "failed to ensure NVMe-oF resources for existing volume: %v", err)
 			}
@@ -411,17 +419,17 @@ func (s *ControllerServer) CreateVolume(ctx context.Context, req *csi.CreateVolu
 	}
 
 	if req.VolumeContentSource != nil {
-		return s.createVolumeFromSource(ctx, req, volumeID, datasetPath, protocol, parameters)
+		return s.createVolumeFromSource(ctx, req, volumeID, datasetPath, protocol, parameters, secrets)
 	}
 
 	var volInfo *VolumeInfo
 	switch protocol {
 	case ProtocolISCSI:
-		volInfo, err = s.createISCSIVolume(ctx, volumeID, datasetPath, requiredBytes, parameters)
+		volInfo, err = s.createISCSIVolume(ctx, volumeID, datasetPath, requiredBytes, parameters, secrets)
 	case ProtocolNVMeOF:
-		volInfo, err = s.createNVMeOFVolume(ctx, volumeID, datasetPath, requiredBytes, parameters)
+		volInfo, err = s.createNVMeOFVolume(ctx, volumeID, datasetPath, requiredBytes, parameters, secrets)
 	default:
-		volInfo, err = s.createNFSVolume(ctx, volumeID, datasetPath, requiredBytes, parameters)
+		volInfo, err = s.createNFSVolume(ctx, volumeID, datasetPath, requiredBytes, parameters, secrets)
 	}
 
 	if err != nil {
@@ -442,7 +450,7 @@ func (s *ControllerServer) CreateVolume(ctx context.Context, req *csi.CreateVolu
 }
 
 // createNFSVolume creates a ZFS filesystem dataset and NFS share for the volume.
-func (s *ControllerServer) createNFSVolume(ctx context.Context, volumeID, datasetPath string, capacityBytes int64, parameters map[string]string) (*VolumeInfo, error) {
+func (s *ControllerServer) createNFSVolume(ctx context.Context, volumeID, datasetPath string, capacityBytes int64, parameters, secrets map[string]string) (*VolumeInfo, error) {
 	compression := CompressionLZ4
 	if val, ok := parameters[paramCompression]; ok {
 		compression = strings.ToUpper(val)
@@ -474,7 +482,7 @@ func (s *ControllerServer) createNFSVolume(ctx context.Context, volumeID, datase
 	}
 
 	// Add encryption options if configured
-	if encOpts := parseEncryptionOptions(parameters); encOpts != nil {
+	if encOpts := parseEncryptionOptions(parameters, secrets); encOpts != nil {
 		datasetOpts.Encryption = true
 		datasetOpts.EncryptionOptions = encOpts
 		inheritEncryption := false
@@ -599,10 +607,10 @@ var validNVMeOFDHGroups = map[string]bool{
 }
 
 // validateNVMeOFParameters validates the NVMe-oF DH-CHAP StorageClass parameters.
-func validateNVMeOFParameters(parameters map[string]string) error {
+func validateNVMeOFParameters(parameters, secrets map[string]string) error {
 	hostNQN := parameters[paramNVMeOFHostNQN]
-	key := parameters[paramNVMeOFDHCHAPKey]
-	ctrlKey := parameters[paramNVMeOFDHCHAPCtrlKey]
+	key := secretOrParam(secrets, parameters, paramNVMeOFDHCHAPKey)
+	ctrlKey := secretOrParam(secrets, parameters, paramNVMeOFDHCHAPCtrlKey)
 
 	if key != "" && hostNQN == "" {
 		return fmt.Errorf("%s is required when %s is set", paramNVMeOFHostNQN, paramNVMeOFDHCHAPKey)
@@ -643,7 +651,7 @@ func makeNVMeSubsysName(volumeID string) string {
 // buildZVOLCreateOptions builds the dataset create options for a ZVOL, shared by
 // the iSCSI and NVMe-oF volume creation paths (compression, volblocksize, sparse,
 // zfs.* properties, encryption, ancestor creation).
-func (s *ControllerServer) buildZVOLCreateOptions(datasetPath string, capacityBytes int64, parameters map[string]string) *client.DatasetCreateOptions {
+func (s *ControllerServer) buildZVOLCreateOptions(datasetPath string, capacityBytes int64, parameters, secrets map[string]string) *client.DatasetCreateOptions {
 	compression := CompressionLZ4
 	if val, ok := parameters[paramCompression]; ok {
 		compression = strings.ToUpper(val)
@@ -679,7 +687,7 @@ func (s *ControllerServer) buildZVOLCreateOptions(datasetPath string, capacityBy
 		}
 	}
 
-	if encOpts := parseEncryptionOptions(parameters); encOpts != nil {
+	if encOpts := parseEncryptionOptions(parameters, secrets); encOpts != nil {
 		opts.Encryption = true
 		opts.EncryptionOptions = encOpts
 		inheritEncryption := false
@@ -693,7 +701,7 @@ func (s *ControllerServer) buildZVOLCreateOptions(datasetPath string, capacityBy
 // ensureNVMeHost gets or creates a shared nvmet host for the StorageClass's hostNQN.
 // Hosts are shared across all volumes in a StorageClass; concurrent creation is
 // tolerated by re-querying on conflict.
-func (s *ControllerServer) ensureNVMeHost(ctx context.Context, parameters map[string]string) (int, error) {
+func (s *ControllerServer) ensureNVMeHost(ctx context.Context, parameters, secrets map[string]string) (int, error) {
 	hostNQN := parameters[paramNVMeOFHostNQN]
 	if hostNQN == "" {
 		return 0, fmt.Errorf("nvmeof.hostNQN is required for DH-CHAP")
@@ -707,8 +715,8 @@ func (s *ControllerServer) ensureNVMeHost(ctx context.Context, parameters map[st
 
 	opts := &client.NVMeHostCreateOptions{
 		HostNQN:       hostNQN,
-		DHCHAPKey:     parameters[paramNVMeOFDHCHAPKey],
-		DHCHAPCtrlKey: parameters[paramNVMeOFDHCHAPCtrlKey],
+		DHCHAPKey:     secretOrParam(secrets, parameters, paramNVMeOFDHCHAPKey),
+		DHCHAPCtrlKey: secretOrParam(secrets, parameters, paramNVMeOFDHCHAPCtrlKey),
 		DHCHAPHash:    parameters[paramNVMeOFDHCHAPHash],
 		DHCHAPDHGroup: parameters[paramNVMeOFDHCHAPDHGroup],
 	}
@@ -726,13 +734,13 @@ func (s *ControllerServer) ensureNVMeHost(ctx context.Context, parameters map[st
 // createNVMeOFVolume creates a ZVOL and the NVMe-oF subsystem/namespace/port chain
 // (plus DH-CHAP host authorization when configured). Cleanup on failure is reverse
 // order; the shared port and shared host are never deleted here.
-func (s *ControllerServer) createNVMeOFVolume(ctx context.Context, volumeID, datasetPath string, capacityBytes int64, parameters map[string]string) (*VolumeInfo, error) {
+func (s *ControllerServer) createNVMeOFVolume(ctx context.Context, volumeID, datasetPath string, capacityBytes int64, parameters, secrets map[string]string) (*VolumeInfo, error) {
 	portID, err := s.driver.NVMeOFPortID(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to resolve NVMe-oF port: %w", err)
 	}
 
-	datasetOpts := s.buildZVOLCreateOptions(datasetPath, capacityBytes, parameters)
+	datasetOpts := s.buildZVOLCreateOptions(datasetPath, capacityBytes, parameters, secrets)
 	if _, err := s.driver.Client().CreateDataset(ctx, datasetOpts); err != nil {
 		return nil, fmt.Errorf("failed to create ZVOL: %w", err)
 	}
@@ -767,7 +775,7 @@ func (s *ControllerServer) createNVMeOFVolume(ctx context.Context, volumeID, dat
 
 	var hostID, hostSubsysID int
 	if hostNQN != "" {
-		hostID, err = s.ensureNVMeHost(ctx, parameters)
+		hostID, err = s.ensureNVMeHost(ctx, parameters, secrets)
 		if err != nil {
 			s.driver.Client().DeleteNVMePortSubsys(ctx, portSubsys.ID)
 			s.driver.Client().DeleteNVMeNamespace(ctx, ns.ID)
@@ -815,7 +823,7 @@ func (s *ControllerServer) createNVMeOFVolume(ctx context.Context, volumeID, dat
 // ensureNVMeOFChain verifies the NVMe-oF subsystem/namespace/port chain exists for
 // an existing ZVOL and creates any missing pieces (mirrors ensureISCSIChain for a
 // CreateVolume interrupted after the ZVOL was created). Returns the volume context.
-func (s *ControllerServer) ensureNVMeOFChain(ctx context.Context, volumeID, datasetPath string, parameters map[string]string) (map[string]string, error) {
+func (s *ControllerServer) ensureNVMeOFChain(ctx context.Context, volumeID, datasetPath string, parameters, secrets map[string]string) (map[string]string, error) {
 	zvolPath := "zvol/" + datasetPath
 
 	// If the namespace already exists, the chain is complete.
@@ -856,7 +864,7 @@ func (s *ControllerServer) ensureNVMeOFChain(ctx context.Context, volumeID, data
 	}
 
 	if hostNQN != "" {
-		hostID, err := s.ensureNVMeHost(ctx, parameters)
+		hostID, err := s.ensureNVMeHost(ctx, parameters, secrets)
 		if err != nil {
 			return nil, err
 		}
@@ -1045,14 +1053,26 @@ func copyParameters(m map[string]string) map[string]string {
 	return out
 }
 
+// secretOrParam returns the value for key from CSI secrets if present and
+// non-empty, otherwise the StorageClass parameter of the same key. It lets
+// sensitive fields (CHAP secrets, encryption keys/passphrases) be sourced from
+// a Kubernetes Secret while preserving backward compatibility with inline
+// StorageClass parameters.
+func secretOrParam(secrets, parameters map[string]string, key string) string {
+	if v, ok := secrets[key]; ok && v != "" {
+		return v
+	}
+	return parameters[key]
+}
+
 // createISCSIVolume creates a ZVOL with iSCSI target, extent, and optional CHAP authentication.
-func (s *ControllerServer) createISCSIVolume(ctx context.Context, volumeID, datasetPath string, capacityBytes int64, parameters map[string]string) (*VolumeInfo, error) {
+func (s *ControllerServer) createISCSIVolume(ctx context.Context, volumeID, datasetPath string, capacityBytes int64, parameters, secrets map[string]string) (*VolumeInfo, error) {
 	portalID, err := s.driver.ISCSIPortalID(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to resolve iSCSI portal ID: %w", err)
 	}
 
-	datasetOpts := s.buildZVOLCreateOptions(datasetPath, capacityBytes, parameters)
+	datasetOpts := s.buildZVOLCreateOptions(datasetPath, capacityBytes, parameters, secrets)
 
 	_, err = s.driver.Client().CreateDataset(ctx, datasetOpts)
 	if err != nil {
@@ -1063,7 +1083,7 @@ func (s *ControllerServer) createISCSIVolume(ctx context.Context, volumeID, data
 	var authID int
 	var authTag int
 	if chapUser, ok := parameters[paramISCSIChapUser]; ok && chapUser != "" {
-		chapSecret := parameters[paramISCSIChapSecret]
+		chapSecret := secretOrParam(secrets, parameters, paramISCSIChapSecret)
 		if chapSecret == "" {
 			s.driver.Client().DeleteDataset(ctx, datasetPath, &client.DatasetDeleteOptions{Recursive: true, Force: true})
 			return nil, fmt.Errorf("iscsi.chapSecret is required when iscsi.chapUser is specified")
@@ -1085,7 +1105,7 @@ func (s *ControllerServer) createISCSIVolume(ctx context.Context, volumeID, data
 		// Add mutual CHAP if provided
 		if peerUser, ok := parameters[paramISCSIChapPeerUser]; ok && peerUser != "" {
 			authOpts.PeerUser = peerUser
-			authOpts.PeerSecret = parameters[paramISCSIChapPeerSecret]
+			authOpts.PeerSecret = secretOrParam(secrets, parameters, paramISCSIChapPeerSecret)
 			authOpts.DiscoveryAuth = iscsiAuthTypeMutual
 		}
 
@@ -1208,7 +1228,7 @@ func (s *ControllerServer) createISCSIVolume(ctx context.Context, volumeID, data
 }
 
 // createVolumeFromSource creates a volume from a snapshot or existing volume by cloning.
-func (s *ControllerServer) createVolumeFromSource(ctx context.Context, req *csi.CreateVolumeRequest, volumeID, datasetPath, protocol string, parameters map[string]string) (*csi.CreateVolumeResponse, error) {
+func (s *ControllerServer) createVolumeFromSource(ctx context.Context, req *csi.CreateVolumeRequest, volumeID, datasetPath, protocol string, parameters, secrets map[string]string) (*csi.CreateVolumeResponse, error) {
 	s.driver.Log().V(LogLevelDebug).Info("Creating volume from content source", "volumeId", volumeID)
 	contentSource := req.VolumeContentSource
 
@@ -1227,7 +1247,7 @@ func (s *ControllerServer) createVolumeFromSource(ctx context.Context, req *csi.
 		if existingDataset.Type == datasetTypeVolume && isZVOLProtocol(protocol) {
 			var volCtx map[string]string
 			if protocol == ProtocolNVMeOF {
-				volCtx, err = s.ensureNVMeOFChain(ctx, volumeID, datasetPath, parameters)
+				volCtx, err = s.ensureNVMeOFChain(ctx, volumeID, datasetPath, parameters, secrets)
 			} else {
 				volCtx, err = s.ensureISCSIChain(ctx, volumeID, datasetPath, parameters)
 			}
@@ -1304,7 +1324,7 @@ func (s *ControllerServer) createVolumeFromSource(ctx context.Context, req *csi.
 		case ProtocolISCSI:
 			volInfo, err = s.createISCSITargetForClone(ctx, volumeID, datasetPath, requiredBytes, parameters)
 		case ProtocolNVMeOF:
-			volInfo, err = s.createNVMeOFTargetForClone(ctx, volumeID, datasetPath, requiredBytes, parameters)
+			volInfo, err = s.createNVMeOFTargetForClone(ctx, volumeID, datasetPath, requiredBytes, parameters, secrets)
 		default:
 			volInfo, err = s.createNFSShareForClone(ctx, volumeID, datasetPath, dataset, parameters)
 		}
@@ -1390,7 +1410,7 @@ func (s *ControllerServer) createVolumeFromSource(ctx context.Context, req *csi.
 		case ProtocolISCSI:
 			volInfo, err = s.createISCSITargetForClone(ctx, volumeID, datasetPath, requiredBytes, parameters)
 		case ProtocolNVMeOF:
-			volInfo, err = s.createNVMeOFTargetForClone(ctx, volumeID, datasetPath, requiredBytes, parameters)
+			volInfo, err = s.createNVMeOFTargetForClone(ctx, volumeID, datasetPath, requiredBytes, parameters, secrets)
 		default:
 			volInfo, err = s.createNFSShareForClone(ctx, volumeID, datasetPath, dataset, parameters)
 		}
@@ -1543,7 +1563,7 @@ func isZVOLProtocol(protocol string) bool {
 // createNVMeOFTargetForClone builds the NVMe-oF chain for an already-cloned ZVOL
 // (subsystem + namespace + port link, plus DH-CHAP host authorization when set).
 // Mirrors createISCSITargetForClone; the dataset already exists (it was cloned).
-func (s *ControllerServer) createNVMeOFTargetForClone(ctx context.Context, volumeID, datasetPath string, capacityBytes int64, parameters map[string]string) (*VolumeInfo, error) {
+func (s *ControllerServer) createNVMeOFTargetForClone(ctx context.Context, volumeID, datasetPath string, capacityBytes int64, parameters, secrets map[string]string) (*VolumeInfo, error) {
 	portID, err := s.driver.NVMeOFPortID(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to resolve NVMe-oF port: %w", err)
@@ -1573,7 +1593,7 @@ func (s *ControllerServer) createNVMeOFTargetForClone(ctx context.Context, volum
 
 	var hostID, hostSubsysID int
 	if hostNQN != "" {
-		hostID, err = s.ensureNVMeHost(ctx, parameters)
+		hostID, err = s.ensureNVMeHost(ctx, parameters, secrets)
 		if err != nil {
 			s.driver.Client().DeleteNVMePortSubsys(ctx, portSubsys.ID)
 			s.driver.Client().DeleteNVMeNamespace(ctx, ns.ID)
@@ -2361,7 +2381,7 @@ func (s *ControllerServer) ControllerGetVolume(ctx context.Context, req *csi.Con
 //   - encryption.pbkdf2iters: PBKDF2 iterations (default 350000, min 100000)
 //
 // Returns nil if encryption is not enabled.
-func parseEncryptionOptions(parameters map[string]string) *client.EncryptionOptions {
+func parseEncryptionOptions(parameters, secrets map[string]string) *client.EncryptionOptions {
 	enabled, ok := parameters[paramEncryption]
 	if !ok || !strings.EqualFold(enabled, "true") {
 		return nil
@@ -2376,13 +2396,13 @@ func parseEncryptionOptions(parameters map[string]string) *client.EncryptionOpti
 		opts.Algorithm = strings.ToUpper(val)
 	}
 
-	// Passphrase
-	if val, ok := parameters[paramEncryptionPassphrase]; ok && val != "" {
+	// Passphrase (from Secret or StorageClass parameter)
+	if val := secretOrParam(secrets, parameters, paramEncryptionPassphrase); val != "" {
 		opts.Passphrase = &val
 	}
 
-	// Key (hex-encoded, 64 chars)
-	if val, ok := parameters[paramEncryptionKey]; ok && val != "" {
+	// Key (hex-encoded, 64 chars; from Secret or StorageClass parameter)
+	if val := secretOrParam(secrets, parameters, paramEncryptionKey); val != "" {
 		opts.Key = &val
 	}
 
