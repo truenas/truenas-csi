@@ -310,12 +310,14 @@ func NewDriver(config *DriverConfig) (*Driver, error) {
 		return nil, fmt.Errorf("default pool is required")
 	}
 
-	if config.ISCSIIQNBase == "" {
-		config.ISCSIIQNBase = DEFAULT_IQN_BASE
-	}
-
-	if err := validateIQNFormat(config.ISCSIIQNBase); err != nil {
-		return nil, fmt.Errorf("invalid iSCSI IQN base format: %w", err)
+	// If the IQN base is explicitly configured, validate it now. Otherwise it is
+	// auto-detected from TrueNAS's iscsi.global basename after the client connects
+	// (targets are named "<basename>:<target>", and the basename varies by
+	// platform, e.g. iqn.2005-10.org.freenas.ctl), falling back to DEFAULT_IQN_BASE.
+	if config.ISCSIIQNBase != "" {
+		if err := validateIQNFormat(config.ISCSIIQNBase); err != nil {
+			return nil, fmt.Errorf("invalid iSCSI IQN base format: %w", err)
+		}
 	}
 
 	// Derive NFS server from TrueNAS URL if not explicitly set
@@ -419,6 +421,24 @@ func NewDriver(config *DriverConfig) (*Driver, error) {
 	} else {
 		nvmeBaseNQN = gc.BaseNQN
 		log.V(LogLevelInfo).Info("Read nvmet base NQN", "baseNQN", nvmeBaseNQN)
+	}
+
+	// Auto-detect the iSCSI IQN base from TrueNAS when not explicitly configured.
+	// TrueNAS names every target "<iscsi.global basename>:<target>", so the node
+	// must log in to that exact IQN; assuming a fixed base makes the node target a
+	// nonexistent IQN and login fails.
+	if config.ISCSIIQNBase == "" {
+		if gc, err := truenasClient.GetISCSIGlobalConfig(ctx); err == nil && validateIQNFormat(gc.Basename) == nil {
+			config.ISCSIIQNBase = gc.Basename
+			log.V(LogLevelInfo).Info("Detected iSCSI base name from TrueNAS", "basename", gc.Basename)
+		} else {
+			if err != nil {
+				log.V(LogLevelInfo).Info("Failed to read iscsi.global config; using default IQN base", "error", err, "default", DEFAULT_IQN_BASE)
+			} else {
+				log.V(LogLevelInfo).Info("iscsi.global basename invalid; using default IQN base", "basename", gc.Basename, "default", DEFAULT_IQN_BASE)
+			}
+			config.ISCSIIQNBase = DEFAULT_IQN_BASE
+		}
 	}
 
 	// Default to "all" mode if not specified
