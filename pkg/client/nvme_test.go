@@ -45,6 +45,22 @@ func TestGetNVMeGlobalConfig_Success(t *testing.T) {
 	assertTrue(t, cfg.Kernel)
 }
 
+func TestGetISCSIGlobalConfig_Success(t *testing.T) {
+	mock := NewMockTrueNASServer()
+	defer mock.Close()
+
+	mock.SetResponse(methodISCSIGlobalConfig, MockResponse{
+		Result: ISCSIGlobalConfig{ID: 1, Basename: "iqn.2005-10.org.freenas.ctl"},
+	})
+
+	client := connectTestClient(t, mock)
+
+	cfg, err := client.GetISCSIGlobalConfig(testContext(t))
+	assertNoError(t, err)
+	assertNotNil(t, cfg)
+	assertEqual(t, cfg.Basename, "iqn.2005-10.org.freenas.ctl")
+}
+
 func TestCreateNVMeSubsystem_Success(t *testing.T) {
 	mock := NewMockTrueNASServer()
 	defer mock.Close()

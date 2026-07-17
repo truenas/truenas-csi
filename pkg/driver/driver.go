@@ -216,6 +216,11 @@ type Driver struct {
 	iscsiPortal   string
 	iscsiPortalID int
 	iscsiIQNBase  string
+	// iscsiBasename is the appliance's iSCSI global basename, read from TrueNAS
+	// and cached. TrueNAS advertises every target as <basename>:<target-name>, so
+	// this is authoritative over iscsiIQNBase (which is only a fallback). Empty
+	// until resolved (see resolveISCSIBasename).
+	iscsiBasename string
 
 	// NVMe-oF portal (host:port for the NVMe/TCP listener) and the resolved
 	// shared port ID. nvmeBaseNQN is TrueNAS's global base NQN (informational).
@@ -421,6 +426,23 @@ func NewDriver(config *DriverConfig) (*Driver, error) {
 		log.V(LogLevelInfo).Info("Read nvmet base NQN", "baseNQN", nvmeBaseNQN)
 	}
 
+	// Read the appliance's iSCSI global basename. TrueNAS advertises every target
+	// as <basename>:<target-name>, so this value — not the configured IQN base —
+	// is what the node must log in against. Failures are non-fatal: it is resolved
+	// lazily on first use (resolveISCSIBasename).
+	var iscsiBasename string
+	if gc, err := truenasClient.GetISCSIGlobalConfig(ctx); err != nil {
+		log.V(LogLevelInfo).Info("Failed to read iSCSI global config, will retry on first use", "configuredBase", config.ISCSIIQNBase, "error", err)
+	} else if gc.Basename != "" {
+		iscsiBasename = gc.Basename
+		if config.ISCSIIQNBase != "" && config.ISCSIIQNBase != gc.Basename {
+			log.Info("Configured iSCSI IQN base differs from the TrueNAS appliance basename; the appliance value will be used",
+				"configured", config.ISCSIIQNBase, "appliance", gc.Basename)
+		} else {
+			log.V(LogLevelInfo).Info("Read iSCSI global basename", "basename", gc.Basename)
+		}
+	}
+
 	// Default to "all" mode if not specified
 	mode := config.Mode
 	if mode == "" {
@@ -441,6 +463,7 @@ func NewDriver(config *DriverConfig) (*Driver, error) {
 		iscsiPortal:   config.ISCSIPortal,
 		iscsiPortalID: iscsiPortalID,
 		iscsiIQNBase:  config.ISCSIIQNBase,
+		iscsiBasename: iscsiBasename,
 		nvmeofPortal:  config.NVMeOFPortal,
 		nvmeofPortID:  nvmeofPortID,
 		nvmeBaseNQN:   nvmeBaseNQN,
@@ -923,9 +946,27 @@ func (d *Driver) DefaultPool() string {
 	return d.defaultPool
 }
 
-// ISCSIIQNBase returns the base IQN for iSCSI targets
-func (d *Driver) ISCSIIQNBase() string {
-	return d.iscsiIQNBase
+// resolveISCSIBasename returns the appliance's iSCSI global basename, querying
+// TrueNAS once and caching the result. It returns "" if the basename has not
+// been resolved (the startup read failed and this retry also failed), signalling
+// callers to fall back to the configured IQN base.
+func (d *Driver) resolveISCSIBasename(ctx context.Context) string {
+	if d.iscsiBasename != "" {
+		return d.iscsiBasename
+	}
+	gc, err := d.client.GetISCSIGlobalConfig(ctx)
+	if err != nil || gc == nil || gc.Basename == "" {
+		if err != nil {
+			d.log.V(LogLevelInfo).Info("Failed to read iSCSI global config, using configured IQN base", "configuredBase", d.iscsiIQNBase, "error", err)
+		}
+		return ""
+	}
+	if d.iscsiIQNBase != "" && d.iscsiIQNBase != gc.Basename {
+		d.log.Info("Configured iSCSI IQN base differs from the TrueNAS appliance basename; the appliance value will be used",
+			"configured", d.iscsiIQNBase, "appliance", gc.Basename)
+	}
+	d.iscsiBasename = gc.Basename
+	return d.iscsiBasename
 }
 
 // ControllerCaps returns the controller capabilities
@@ -968,8 +1009,16 @@ func (d *Driver) GetPoolFromParameters(parameters map[string]string) string {
 	return d.defaultPool
 }
 
-// GetISCSIIQNBaseFromParameters extracts the IQN base from StorageClass parameters
-func (d *Driver) GetISCSIIQNBaseFromParameters(parameters map[string]string) string {
+// ResolveISCSIIQNBase returns the IQN base to use when building a target's full
+// IQN (<base>:<target-name>). TrueNAS advertises every target using its
+// appliance-wide iSCSI global basename regardless of any client-side setting, so
+// that value is authoritative. The StorageClass iscsi.iqn-base/iscsi.iqn-prefix
+// parameters and the TRUENAS_ISCSI_IQN_BASE env are only used as a fallback when
+// the appliance basename cannot be read. Passing nil parameters is valid.
+func (d *Driver) ResolveISCSIIQNBase(ctx context.Context, parameters map[string]string) string {
+	if base := d.resolveISCSIBasename(ctx); base != "" {
+		return base
+	}
 	if iqnBase, ok := parameters[paramISCSIIQNBase]; ok {
 		return iqnBase
 	}
@@ -1082,7 +1131,7 @@ func (d *Driver) reconstructVolumeFromTrueNAS(ctx context.Context, volumeID stri
 				volInfo.LUN = assoc.LunID
 				if target, err := d.client.GetISCSITargetByID(ctx, assoc.Target); err == nil && target != nil {
 					volInfo.ISCSITargetID = target.ID
-					volInfo.TargetIQN = d.iscsiIQNBase + ":" + target.Name
+					volInfo.TargetIQN = d.ResolveISCSIIQNBase(ctx, nil) + ":" + target.Name
 					volInfo.TargetPortal = d.iscsiPortal
 					volInfo.VolumeContext[PublishContextTargetPortal] = d.iscsiPortal
 					volInfo.VolumeContext[PublishContextTargetIQN] = volInfo.TargetIQN

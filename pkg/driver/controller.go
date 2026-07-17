@@ -946,7 +946,7 @@ func (s *ControllerServer) deleteNVMeOFResources(ctx context.Context, volInfo *V
 // Returns the volume context map with targetPortal, targetIQN, and lun populated.
 func (s *ControllerServer) ensureISCSIChain(ctx context.Context, volumeID, datasetPath string, parameters map[string]string) (map[string]string, error) {
 	zvolPath := fmt.Sprintf("zvol/%s", datasetPath)
-	iqnBase := s.driver.GetISCSIIQNBaseFromParameters(parameters)
+	iqnBase := s.driver.ResolveISCSIIQNBase(ctx, parameters)
 	targetSuffix := makeISCSITargetSuffix(volumeID)
 	extentName := makeISCSIExtentName(volumeID)
 
@@ -1121,7 +1121,7 @@ func (s *ControllerServer) createISCSIVolume(ctx context.Context, volumeID, data
 		s.driver.Log().V(LogLevelDebug).Info("Created initiator group for iSCSI target", "initiatorId", initiatorID, "initiators", initiators)
 	}
 
-	iqnBase := s.driver.GetISCSIIQNBaseFromParameters(parameters)
+	iqnBase := s.driver.ResolveISCSIIQNBase(ctx, parameters)
 
 	targetSuffix := makeISCSITargetSuffix(volumeID)
 	target, err := s.driver.Client().CreateISCSITargetWithAuth(ctx, targetSuffix, fmt.Sprintf("CSI volume %s", volumeID), portalID, authTag, initiatorID)
@@ -1488,7 +1488,7 @@ func (s *ControllerServer) createISCSITargetForClone(ctx context.Context, volume
 		return nil, fmt.Errorf("failed to resolve iSCSI portal ID: %w", err)
 	}
 
-	iqnBase := s.driver.GetISCSIIQNBaseFromParameters(parameters)
+	iqnBase := s.driver.ResolveISCSIIQNBase(ctx, parameters)
 
 	targetSuffix := makeISCSITargetSuffix(volumeID)
 	target, err := s.driver.Client().CreateISCSITarget(ctx, targetSuffix, fmt.Sprintf("CSI volume clone %s", volumeID), portalID)
@@ -1794,7 +1794,7 @@ func (s *ControllerServer) ControllerPublishVolume(ctx context.Context, req *csi
 				publishContext[PublishContextTargetPortal] = s.driver.ISCSIPortal()
 				if targetExtent, err := s.driver.Client().GetISCSITargetExtentByExtent(ctx, extent.ID); err == nil {
 					if target, err := s.driver.Client().GetISCSITargetByID(ctx, targetExtent.Target); err == nil {
-						fullIQN := fmt.Sprintf("%s:%s", s.driver.ISCSIIQNBase(), target.Name)
+						fullIQN := fmt.Sprintf("%s:%s", s.driver.ResolveISCSIIQNBase(ctx, nil), target.Name)
 						publishContext[PublishContextTargetIQN] = fullIQN
 						publishContext[PublishContextLUN] = fmt.Sprintf("%d", targetExtent.LunID)
 						s.driver.Log().Info("Reconstructed iSCSI info from TrueNAS", "volumeId", req.VolumeId, "targetIQN", fullIQN, "lun", targetExtent.LunID)

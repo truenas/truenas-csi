@@ -42,6 +42,7 @@ const (
 	methodISCSIInitiatorQuery     = "iscsi.initiator.query"
 	methodISCSIInitiatorDelete    = "iscsi.initiator.delete"
 	methodISCSIPortalQuery        = "iscsi.portal.query"
+	methodISCSIGlobalConfig       = "iscsi.global.config"
 )
 
 // TrueNAS API method names for snapshots
@@ -1074,6 +1075,24 @@ func (c *Client) GetISCSIPortalByAddress(ctx context.Context, address string) (*
 		}
 	}
 	return nil, nil
+}
+
+// ISCSIGlobalConfig is the iSCSI global configuration (iscsi.global.config).
+// Basename is the appliance-wide IQN base that TrueNAS prepends to every target
+// name when advertising it (e.g. "iqn.2000-01.io.truenas"); it is authoritative
+// over any client-side setting.
+type ISCSIGlobalConfig struct {
+	ID       int    `json:"id"`
+	Basename string `json:"basename"`
+}
+
+// GetISCSIGlobalConfig returns the iSCSI global configuration.
+func (c *Client) GetISCSIGlobalConfig(ctx context.Context) (*ISCSIGlobalConfig, error) {
+	var cfg ISCSIGlobalConfig
+	if err := c.Call(ctx, methodISCSIGlobalConfig, []any{}, &cfg); err != nil {
+		return nil, fmt.Errorf("failed to get iSCSI global config: %w", err)
+	}
+	return &cfg, nil
 }
 
 // CreateSnapshot creates a new ZFS snapshot.
