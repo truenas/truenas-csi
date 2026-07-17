@@ -86,7 +86,7 @@ func (r *TrueNASCSIReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 	// Handle deletion
 	if csi.DeletionTimestamp != nil {
 		if controllerutil.ContainsFinalizer(csi, FinalizerName) {
-			if err := r.cleanupResources(ctx); err != nil {
+			if err := r.cleanupResources(ctx, csi); err != nil {
 				return ctrl.Result{}, err
 			}
 			controllerutil.RemoveFinalizer(csi, FinalizerName)
@@ -261,7 +261,7 @@ func (r *TrueNASCSIReconciler) updateStatusRunning(ctx context.Context, csi *csi
 	return ctrl.Result{RequeueAfter: RequeueAfterRunning}, nil
 }
 
-func (r *TrueNASCSIReconciler) cleanupResources(ctx context.Context) error {
+func (r *TrueNASCSIReconciler) cleanupResources(ctx context.Context, csi *csiv1alpha1.TrueNASCSI) error {
 	log := logf.FromContext(ctx)
 	log.Info("Cleaning up TrueNASCSI resources")
 
@@ -291,6 +291,25 @@ func (r *TrueNASCSIReconciler) cleanupResources(ctx context.Context) error {
 		scc.SetGroupVersionKind(sccGVK)
 		scc.SetName(name)
 		if err := r.Delete(ctx, scc); err != nil && !apierrors.IsNotFound(err) && !meta.IsNoMatchError(err) {
+			return err
+		}
+	}
+
+	// The TrueNASCSI CR is cluster-scoped and its child workloads carry no owner
+	// references, so they are not garbage-collected when the CR is deleted. Remove
+	// the namespaced resources explicitly, otherwise deleting the CR leaves the CSI
+	// driver running.
+	namespace := getNamespace(csi)
+	namespaced := []client.Object{
+		&appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: ControllerDeploymentName, Namespace: namespace}},
+		&appsv1.DaemonSet{ObjectMeta: metav1.ObjectMeta{Name: NodeDaemonSetName, Namespace: namespace}},
+		&corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: ConfigMapName, Namespace: namespace}},
+		&networkingv1.NetworkPolicy{ObjectMeta: metav1.ObjectMeta{Name: NetworkPolicyName, Namespace: namespace}},
+		&corev1.ServiceAccount{ObjectMeta: metav1.ObjectMeta{Name: ControllerServiceAccount, Namespace: namespace}},
+		&corev1.ServiceAccount{ObjectMeta: metav1.ObjectMeta{Name: NodeServiceAccount, Namespace: namespace}},
+	}
+	for _, obj := range namespaced {
+		if err := r.Delete(ctx, obj); err != nil && !apierrors.IsNotFound(err) {
 			return err
 		}
 	}

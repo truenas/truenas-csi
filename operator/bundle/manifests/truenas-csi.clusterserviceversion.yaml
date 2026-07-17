@@ -22,8 +22,8 @@ metadata:
       ]
     capabilities: Full Lifecycle
     categories: Storage
-    containerImage: quay.io/truenas_solutions/truenas-csi-operator@sha256:c46f8e518741a6d8c0efd86b705400b106576a2eaa55db873cf9350c6797a0e6
-    createdAt: "2026-07-17T17:40:09Z"
+    containerImage: quay.io/truenas_solutions/truenas-csi-operator@sha256:c17e440e429b856aa284457249b5aa52f3837d29ca73f24ec806ef913c1f97fa
+    createdAt: "2026-07-17T18:41:08Z"
     description: Deploys and manages the TrueNAS CSI driver for dynamic volume provisioning
     features.operators.openshift.io/cnf: "false"
     features.operators.openshift.io/cni: "false"
@@ -545,7 +545,7 @@ spec:
                         value: registry.k8s.io/sig-storage/livenessprobe@sha256:7fe80915b3cb9fb1d09dbd300a0682cafa8ab93947cd3ddc3e15a8250621bf24
                       - name: DRIVER_IMAGE
                         value: quay.io/truenas_solutions/truenas-csi@sha256:24b5f98db445b1bd4d9eb4e0d57448ddec82a08a5f2d8c3267bf793096e60604
-                    image: quay.io/truenas_solutions/truenas-csi-operator@sha256:c46f8e518741a6d8c0efd86b705400b106576a2eaa55db873cf9350c6797a0e6
+                    image: quay.io/truenas_solutions/truenas-csi-operator@sha256:c17e440e429b856aa284457249b5aa52f3837d29ca73f24ec806ef913c1f97fa
                     livenessProbe:
                       httpGet:
                         path: /healthz
@@ -646,7 +646,7 @@ spec:
     name: TrueNAS
     url: https://www.truenas.com
   relatedImages:
-    - image: quay.io/truenas_solutions/truenas-csi-operator@sha256:c46f8e518741a6d8c0efd86b705400b106576a2eaa55db873cf9350c6797a0e6
+    - image: quay.io/truenas_solutions/truenas-csi-operator@sha256:c17e440e429b856aa284457249b5aa52f3837d29ca73f24ec806ef913c1f97fa
       name: truenas-csi-operator
     - image: quay.io/truenas_solutions/truenas-csi@sha256:24b5f98db445b1bd4d9eb4e0d57448ddec82a08a5f2d8c3267bf793096e60604
       name: truenas-csi
