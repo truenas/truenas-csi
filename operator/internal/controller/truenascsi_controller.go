@@ -645,13 +645,16 @@ func (r *TrueNASCSIReconciler) buildNodeContainer(image string, logLevel int32, 
 		// PostStart creates an iscsiadm wrapper that uses the host's iSCSI stack
 		// via nsenter (avoiding container/host iscsiadm version mismatches), and
 		// loads the NVMe/TCP fabrics kernel modules (NVMe-oF has no host daemon, so
-		// nvme-cli runs in-container; it only needs the modules loaded).
+		// nvme-cli runs in-container; it only needs the modules loaded). The modprobes
+		// run in the host mount namespace via nsenter so the host kmod handles
+		// compressed (.ko.zst) modules, and are non-fatal — NVMe-oF is optional, so the
+		// hook's verdict is gated on the iscsiadm shim instead.
 		Lifecycle: &corev1.Lifecycle{
 			PostStart: &corev1.LifecycleHandler{
 				Exec: &corev1.ExecAction{
 					Command: []string{
 						"/bin/sh", "-c",
-						fmt.Sprintf("mkdir -p %s && mv /usr/sbin/iscsiadm /usr/sbin/iscsiadm.orig 2>/dev/null; printf '#!/bin/sh\\nnsenter --mount=/host/proc/1/ns/mnt -- /usr/sbin/iscsiadm \"$@\"\\n' > /usr/sbin/iscsiadm && chmod +x /usr/sbin/iscsiadm; modprobe nvme_tcp 2>/dev/null; modprobe nvme_fabrics 2>/dev/null", ISCSILockDir),
+						fmt.Sprintf("mkdir -p %s && mv /usr/sbin/iscsiadm /usr/sbin/iscsiadm.orig 2>/dev/null; printf '#!/bin/sh\\nnsenter --mount=/host/proc/1/ns/mnt -- /usr/sbin/iscsiadm \"$@\"\\n' > /usr/sbin/iscsiadm && chmod +x /usr/sbin/iscsiadm; nsenter --mount=/host/proc/1/ns/mnt -- modprobe nvme_tcp 2>/dev/null || true; nsenter --mount=/host/proc/1/ns/mnt -- modprobe nvme_fabrics 2>/dev/null || true; test -x /usr/sbin/iscsiadm", ISCSILockDir),
 					},
 				},
 			},
