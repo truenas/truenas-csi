@@ -45,6 +45,16 @@ lint: ## Run linter
 clean: ## Clean build artifacts
 	rm -rf bin/
 
+.PHONY: bump-version
+bump-version: ## Update all hardcoded version refs (e.g. make bump-version VERSION=1.1.3)
+	@echo "Setting version to $(VERSION)"
+	sed -i 's/^VERSION ?= .*/VERSION ?= $(VERSION)/' Makefile operator/Makefile
+	sed -i 's#\(truenas-csi-operator:v\)[0-9][0-9.]*#\1$(VERSION)#' operator/config/manifests/bases/operator.clusterserviceversion.yaml
+	sed -i 's#\(truenas-csi:v\)[0-9][0-9.]*#\1$(VERSION)#' operator/config/manager/manager.yaml
+	sed -i 's/^\( *newTag: *\)v[0-9][0-9.]*/\1v$(VERSION)/' operator/config/manager/kustomization.yaml
+	@echo "Done. Dockerfile 'version' labels are set from the VERSION build-arg at build time."
+	@echo "Next: make bundle VERSION=$(VERSION) USE_IMAGE_DIGESTS=true CHANNELS=stable DEFAULT_CHANNEL=stable (then finalize the CSV name/replaces)."
+
 ##@ Docker Builds (Standard)
 
 .PHONY: docker-build
@@ -77,7 +87,7 @@ push-latest: ## Push all images with 'latest' tag (required for integration test
 .PHONY: operator-build
 operator-build: ## Build the UBI-based operator image for Red Hat certification
 	cp LICENSE operator/LICENSE
-	cd operator && docker build --pull -f Dockerfile.ubi --provenance=false --sbom=false -t $(OPERATOR_IMAGE):$(IMG_TAG) .
+	cd operator && docker build --pull -f Dockerfile.ubi --provenance=false --sbom=false --build-arg VERSION=$(VERSION) -t $(OPERATOR_IMAGE):$(IMG_TAG) .
 	rm -f operator/LICENSE
 
 .PHONY: operator-push

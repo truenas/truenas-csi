@@ -43,10 +43,13 @@ RUN mkdir -p /nvme-deps/usr/lib64 \
 # Stage 3: Final UBI-based image for Red Hat certification
 FROM registry.access.redhat.com/ubi10/ubi-minimal:latest
 
+# Version label is populated from the VERSION build-arg (the Makefile passes it).
+ARG VERSION=dev
+
 # Required Red Hat certification labels
 LABEL name="truenas-csi" \
       vendor="TrueNAS" \
-      version="1.1.2" \
+      version="${VERSION}" \
       release="1" \
       summary="TrueNAS CSI Driver for Kubernetes/OpenShift" \
       description="Container Storage Interface driver for TrueNAS storage systems. Supports NFS, iSCSI, and NVMe-oF protocols with snapshots, clones, and volume expansion." \

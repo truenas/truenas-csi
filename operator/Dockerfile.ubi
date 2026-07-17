@@ -23,10 +23,13 @@ RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build -a -o ma
 # Use UBI 10 micro as base image for Red Hat certification
 FROM registry.access.redhat.com/ubi10/ubi-micro:latest
 
+# Version label is populated from the VERSION build-arg (the Makefile passes it).
+ARG VERSION=dev
+
 # Required Red Hat certification labels
 LABEL name="truenas-csi-operator" \
       vendor="TrueNAS" \
-      version="1.1.2" \
+      version="${VERSION}" \
       release="1" \
       summary="TrueNAS CSI Operator for Kubernetes/OpenShift" \
       description="Kubernetes operator for deploying and managing the TrueNAS CSI driver on OpenShift. Automates deployment of CSI controller and node components." \
