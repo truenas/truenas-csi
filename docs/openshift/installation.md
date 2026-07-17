@@ -26,7 +26,19 @@ This guide covers installing the TrueNAS CSI Driver on Red Hat OpenShift using t
 
 Wait for the operator to install. The status should show "Succeeded".
 
-### Step 2: Create API Credentials Secret
+### Step 2: Create the Driver Namespace
+
+The credentials secret (next step) lives in the namespace where the driver
+components run, so create it first. It must match `spec.namespace` in the
+TrueNASCSI resource (default `truenas-csi`). The operator also reconciles this
+namespace, but the secret is applied before the resource exists, so it must be
+created up front:
+
+```bash
+oc new-project truenas-csi
+```
+
+### Step 3: Create API Credentials Secret
 
 Create a secret containing your TrueNAS API key:
 
@@ -47,7 +59,7 @@ Apply the secret:
 oc apply -f truenas-api-credentials.yaml
 ```
 
-### Step 3: Create TrueNASCSI Resource
+### Step 4: Create TrueNASCSI Resource
 
 Create a TrueNASCSI custom resource to deploy the CSI driver:
 
@@ -82,7 +94,7 @@ Apply the resource:
 oc apply -f truenas-csi.yaml
 ```
 
-### Step 4: Verify Installation
+### Step 5: Verify Installation
 
 Check the status of the TrueNASCSI resource:
 

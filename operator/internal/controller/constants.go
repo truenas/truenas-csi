@@ -39,6 +39,12 @@ const (
 	NodeClusterRoleBindingName       = "truenas-csi-node-binding"
 )
 
+// OpenShift SecurityContextConstraints names
+const (
+	NodeSCCName       = "truenas-csi-node-scc"
+	ControllerSCCName = "truenas-csi-controller-scc"
+)
+
 // Container names
 const (
 	ControllerContainerName    = "csi-controller"

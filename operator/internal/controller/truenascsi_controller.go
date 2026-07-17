@@ -12,7 +12,9 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/utils/ptr"
@@ -153,6 +155,12 @@ func (r *TrueNASCSIReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 		return r.updateStatusFailed(ctx, csi, err)
 	}
 
+	log.V(1).Info("Reconciling SecurityContextConstraints")
+	if err := r.reconcileSCC(ctx, csi); err != nil {
+		log.Error(err, "Failed to reconcile SecurityContextConstraints")
+		return r.updateStatusFailed(ctx, csi, err)
+	}
+
 	log.V(1).Info("Reconciling CSIDriver")
 	if err := r.reconcileCSIDriver(ctx); err != nil {
 		log.Error(err, "Failed to reconcile CSIDriver")
@@ -274,6 +282,15 @@ func (r *TrueNASCSIReconciler) cleanupResources(ctx context.Context) error {
 	for _, name := range []string{ControllerClusterRoleName, NodeClusterRoleName} {
 		cr := &rbacv1.ClusterRole{ObjectMeta: metav1.ObjectMeta{Name: name}}
 		if err := r.Delete(ctx, cr); err != nil && !apierrors.IsNotFound(err) {
+			return err
+		}
+	}
+
+	for _, name := range []string{NodeSCCName, ControllerSCCName} {
+		scc := &unstructured.Unstructured{}
+		scc.SetGroupVersionKind(sccGVK)
+		scc.SetName(name)
+		if err := r.Delete(ctx, scc); err != nil && !apierrors.IsNotFound(err) && !meta.IsNoMatchError(err) {
 			return err
 		}
 	}
@@ -436,6 +453,97 @@ func (r *TrueNASCSIReconciler) reconcileRBAC(ctx context.Context, csi *csiv1alph
 		return nil
 	})
 	return err
+}
+
+// sccGVK is the GroupVersionKind for OpenShift SecurityContextConstraints.
+var sccGVK = schema.GroupVersionKind{Group: "security.openshift.io", Version: "v1", Kind: "SecurityContextConstraints"}
+
+// sccDefinition describes an SCC the operator manages for one CSI workload.
+type sccDefinition struct {
+	name      string
+	component string
+	fields    map[string]any
+}
+
+// sccDefinitions returns the SecurityContextConstraints the CSI workloads need,
+// with each SCC granting only this driver's ServiceAccount in the given namespace.
+// The node SCC is privileged (hostPath/hostNetwork/privileged mount operations);
+// the controller SCC is unprivileged but RunAsAny, because the controller pods run
+// as a fixed non-root UID that falls outside a namespace's OpenShift-assigned UID
+// range and is therefore rejected by the default restricted-v2 SCC.
+func sccDefinitions(namespace string) []sccDefinition {
+	saUser := func(sa string) []any {
+		return []any{fmt.Sprintf("system:serviceaccount:%s:%s", namespace, sa)}
+	}
+	// Strategies that leave the mapped user/SELinux/groups unconstrained so the
+	// workloads' own securityContext is honored.
+	common := func(m map[string]any, sa string) map[string]any {
+		m["runAsUser"] = map[string]any{"type": "RunAsAny"}
+		m["seLinuxContext"] = map[string]any{"type": "MustRunAs"}
+		m["fsGroup"] = map[string]any{"type": "RunAsAny"}
+		m["supplementalGroups"] = map[string]any{"type": "RunAsAny"}
+		m["users"] = saUser(sa)
+		return m
+	}
+
+	return []sccDefinition{
+		{
+			name:      NodeSCCName,
+			component: "node",
+			fields: common(map[string]any{
+				"allowPrivilegedContainer": true,
+				"allowHostIPC":             true,
+				"allowHostNetwork":         true,
+				"allowHostPID":             true,
+				"allowHostPorts":           true,
+				"allowHostDirVolumePlugin": true,
+				"allowedCapabilities":      []any{"SYS_ADMIN"},
+				"volumes":                  []any{"configMap", "downwardAPI", "emptyDir", "hostPath", "persistentVolumeClaim", "projected", "secret"},
+			}, NodeServiceAccount),
+		},
+		{
+			name:      ControllerSCCName,
+			component: "controller",
+			fields: common(map[string]any{
+				"allowPrivilegedContainer": false,
+				"allowHostNetwork":         false,
+				"allowHostPID":             false,
+				"allowHostPorts":           false,
+				"allowHostDirVolumePlugin": false,
+				"volumes":                  []any{"configMap", "downwardAPI", "emptyDir", "projected", "secret"},
+			}, ControllerServiceAccount),
+		},
+	}
+}
+
+// reconcileSCC creates the OpenShift SecurityContextConstraints the CSI workloads
+// need (see sccDefinitions). On clusters without the security.openshift.io API
+// (plain Kubernetes) this is a no-op.
+func (r *TrueNASCSIReconciler) reconcileSCC(ctx context.Context, csi *csiv1alpha1.TrueNASCSI) error {
+	log := logf.FromContext(ctx)
+
+	for _, def := range sccDefinitions(getNamespace(csi)) {
+		scc := &unstructured.Unstructured{}
+		scc.SetGroupVersionKind(sccGVK)
+		scc.SetName(def.name)
+
+		_, err := controllerutil.CreateOrUpdate(ctx, r.Client, scc, func() error {
+			scc.SetLabels(ComponentLabels(def.component))
+			for k, v := range def.fields {
+				scc.Object[k] = v
+			}
+			return nil
+		})
+		if err != nil {
+			if meta.IsNoMatchError(err) {
+				log.V(1).Info("SecurityContextConstraints API not present; skipping SCC reconciliation (not OpenShift)", "scc", def.name)
+				return nil
+			}
+			return err
+		}
+	}
+
+	return nil
 }
 
 func (r *TrueNASCSIReconciler) reconcileCSIDriver(ctx context.Context) error {
