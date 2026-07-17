@@ -53,6 +53,12 @@ const (
 	defaultNFSMapAllUser  = "root"
 	defaultNFSMapAllGroup = "wheel"
 
+	// defaultNFSMapRootUser and defaultNFSMapRootGroup are used when nfs.rootSquash
+	// is disabled: incoming root maps to root:wheel (no_root_squash) and other UIDs
+	// are preserved, so a pod fsGroup can chown the volume root.
+	defaultNFSMapRootUser  = "root"
+	defaultNFSMapRootGroup = "wheel"
+
 	// Default values
 	defaultVolBlockSize = "16K"
 	defaultSyncMode     = "STANDARD"
@@ -441,6 +447,42 @@ func (s *ControllerServer) CreateVolume(ctx context.Context, req *csi.CreateVolu
 	return resp, nil
 }
 
+// applyNFSShareParameters configures an NFS share's user/group mapping and access
+// lists from StorageClass parameters. By default all access is squashed to a
+// single user via mapall (defaultNFSMapAllUser:defaultNFSMapAllGroup, overridable
+// via nfs.mapAllUser/nfs.mapAllGroup). Setting nfs.rootSquash="false" instead maps
+// incoming root to root:wheel (no_root_squash) and preserves other UIDs, so that a
+// pod fsGroup (the driver sets CSIDriver fsGroupPolicy: File) can chown the volume
+// root for ownership-sensitive non-root workloads such as PostgreSQL/CNPG. mapall
+// and no_root_squash are mutually exclusive — mapall would re-squash root — so the
+// mapall parameters are ignored when root squashing is disabled.
+func applyNFSShareParameters(opts *client.NFSShareCreateOptions, parameters map[string]string) {
+	stringPtr := func(s string) *string { return &s }
+
+	if val, ok := parameters[paramNFSRootSquash]; ok && strings.EqualFold(val, "false") {
+		opts.MapRootUser = stringPtr(defaultNFSMapRootUser)
+		opts.MapRootGroup = stringPtr(defaultNFSMapRootGroup)
+	} else {
+		mapAllUser := defaultNFSMapAllUser
+		if val, ok := parameters[paramNFSMapAllUser]; ok && val != "" {
+			mapAllUser = val
+		}
+		mapAllGroup := defaultNFSMapAllGroup
+		if val, ok := parameters[paramNFSMapAllGroup]; ok && val != "" {
+			mapAllGroup = val
+		}
+		opts.MapAllUser = stringPtr(mapAllUser)
+		opts.MapAllGroup = stringPtr(mapAllGroup)
+	}
+
+	if hosts, ok := parameters[paramNFSHosts]; ok {
+		opts.Hosts = strings.Split(hosts, ",")
+	}
+	if networks, ok := parameters[paramNFSNetworks]; ok {
+		opts.Networks = strings.Split(networks, ",")
+	}
+}
+
 // createNFSVolume creates a ZFS filesystem dataset and NFS share for the volume.
 func (s *ControllerServer) createNFSVolume(ctx context.Context, volumeID, datasetPath string, capacityBytes int64, parameters map[string]string) (*VolumeInfo, error) {
 	compression := CompressionLZ4
@@ -492,33 +534,13 @@ func (s *ControllerServer) createNFSVolume(ctx context.Context, volumeID, datase
 		mountpoint = filepath.Join(DefaultMountpoint, datasetPath)
 	}
 
-	stringPtr := func(s string) *string { return &s }
-
-	mapAllUser := defaultNFSMapAllUser
-	if val, ok := parameters[paramNFSMapAllUser]; ok && val != "" {
-		mapAllUser = val
-	}
-	mapAllGroup := defaultNFSMapAllGroup
-	if val, ok := parameters[paramNFSMapAllGroup]; ok && val != "" {
-		mapAllGroup = val
-	}
-
 	shareOpts := &client.NFSShareCreateOptions{
-		Path:        mountpoint,
-		Comment:     fmt.Sprintf("CSI volume %s", volumeID),
-		Enabled:     true,
-		ReadOnly:    false,
-		MapAllUser:  stringPtr(mapAllUser),
-		MapAllGroup: stringPtr(mapAllGroup),
+		Path:     mountpoint,
+		Comment:  fmt.Sprintf("CSI volume %s", volumeID),
+		Enabled:  true,
+		ReadOnly: false,
 	}
-
-	if hosts, ok := parameters[paramNFSHosts]; ok {
-		shareOpts.Hosts = strings.Split(hosts, ",")
-	}
-
-	if networks, ok := parameters[paramNFSNetworks]; ok {
-		shareOpts.Networks = strings.Split(networks, ",")
-	}
+	applyNFSShareParameters(shareOpts, parameters)
 
 	s.driver.Log().V(LogLevelDebug).Info("Creating NFS share", "mountpoint", mountpoint, "hosts", shareOpts.Hosts, "networks", shareOpts.Networks)
 	share, err := s.driver.Client().CreateNFSShare(ctx, shareOpts)
@@ -1428,33 +1450,13 @@ func (s *ControllerServer) createNFSShareForClone(ctx context.Context, volumeID,
 		mountpoint = fmt.Sprintf("/mnt/%s", datasetPath)
 	}
 
-	stringPtr := func(s string) *string { return &s }
-
-	mapAllUser := defaultNFSMapAllUser
-	if val, ok := parameters[paramNFSMapAllUser]; ok && val != "" {
-		mapAllUser = val
-	}
-	mapAllGroup := defaultNFSMapAllGroup
-	if val, ok := parameters[paramNFSMapAllGroup]; ok && val != "" {
-		mapAllGroup = val
-	}
-
 	shareOpts := &client.NFSShareCreateOptions{
-		Path:        mountpoint,
-		Comment:     fmt.Sprintf("CSI volume clone %s", volumeID),
-		Enabled:     true,
-		ReadOnly:    false,
-		MapAllUser:  stringPtr(mapAllUser),
-		MapAllGroup: stringPtr(mapAllGroup),
+		Path:     mountpoint,
+		Comment:  fmt.Sprintf("CSI volume clone %s", volumeID),
+		Enabled:  true,
+		ReadOnly: false,
 	}
-
-	if hosts, ok := parameters[paramNFSHosts]; ok {
-		shareOpts.Hosts = strings.Split(hosts, ",")
-	}
-
-	if networks, ok := parameters[paramNFSNetworks]; ok {
-		shareOpts.Networks = strings.Split(networks, ",")
-	}
+	applyNFSShareParameters(shareOpts, parameters)
 
 	share, err := s.driver.Client().CreateNFSShare(ctx, shareOpts)
 	if err != nil {

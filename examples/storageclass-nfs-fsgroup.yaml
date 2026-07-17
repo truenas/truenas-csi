@@ -1,0 +1,30 @@
+# NFS StorageClass for ownership-sensitive non-root workloads (e.g. PostgreSQL/CloudNativePG)
+#
+# By default an NFS share squashes all access to a single user (mapall, root:wheel),
+# so a non-root workload cannot own the files it writes and cannot create the top
+# level of its data directory. Setting nfs.rootSquash: "false" switches the share to
+# no_root_squash: incoming root is preserved (so the kubelet can chown the volume
+# root to the pod's fsGroup via the driver's fsGroupPolicy: File) and other UIDs are
+# no longer squashed.
+#
+# REQUIRED: the workload must set a pod securityContext.fsGroup, e.g.
+#
+#   spec:
+#     securityContext:
+#       fsGroup: 26          # postgres gid; kubelet chowns the volume root to this
+#       runAsUser: 26
+#       runAsNonRoot: true
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: truenas-nfs-fsgroup
+provisioner: csi.truenas.io
+parameters:
+  protocol: "nfs"
+  # Disable root squashing so a pod fsGroup can take ownership of the volume root.
+  nfs.rootSquash: "false"
+  # ZFS compression (optional): OFF, LZ4, GZIP, ZSTD, ZLE, LZJB
+  compression: "LZ4"
+reclaimPolicy: Delete
+volumeBindingMode: Immediate
+allowVolumeExpansion: true

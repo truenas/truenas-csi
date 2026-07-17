@@ -168,6 +168,16 @@ sudo systemctl enable microk8s-mount-propagation
 | `nfs.mountOptions` | Client mount options | `hard,nfsvers=4.1` |
 | `nfs.mapAllUser` | NFS user mapping (default: `root`) | `postgres` |
 | `nfs.mapAllGroup` | NFS group mapping (default: `wheel`) | `postgres` |
+| `nfs.rootSquash` | Squash all access to the mapped user (default: `true`). Set `false` for `no_root_squash` so a pod `fsGroup` can chown the volume root — required for ownership-sensitive non-root workloads (e.g. PostgreSQL/CNPG) | `false` |
+
+By default an NFS share squashes all client access to a single user (`mapall`,
+`root:wheel`). Ownership-sensitive workloads that run as a non-root user (such as
+PostgreSQL/CloudNativePG) need to own their data directory, which `mapall` cannot
+provide. Set `nfs.rootSquash: "false"` to switch the share to `no_root_squash`:
+incoming root is preserved so the kubelet (via the driver's `fsGroupPolicy: File`)
+can chown the volume root to the pod's `fsGroup`, and non-root UIDs are no longer
+squashed. Requires the workload to set a pod `securityContext.fsGroup`. See
+`examples/storageclass-nfs-fsgroup.yaml`.
 
 #### iSCSI Parameters
 
@@ -220,6 +230,7 @@ See the [`examples/`](examples/) folder for sample configurations:
 
 - `storageclass-nfs.yaml` - Basic NFS StorageClass
 - `storageclass-nfs-compressed.yaml` - NFS with ZSTD compression
+- `storageclass-nfs-fsgroup.yaml` - NFS for ownership-sensitive non-root workloads (no_root_squash + pod fsGroup)
 - `storageclass-iscsi.yaml` - Basic iSCSI StorageClass
 - `storageclass-iscsi-chap.yaml` - iSCSI with CHAP authentication
 - `storageclass-nvmeof.yaml` - Basic NVMe-oF/TCP StorageClass

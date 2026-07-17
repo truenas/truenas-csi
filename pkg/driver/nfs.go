@@ -31,6 +31,7 @@ const (
 	paramNFSNetworks     = "nfs.networks"
 	paramNFSMapAllUser   = "nfs.mapAllUser"
 	paramNFSMapAllGroup  = "nfs.mapAllGroup"
+	paramNFSRootSquash   = "nfs.rootSquash"
 )
 
 // NFSHandler implements the ProtocolHandler interface for NFS volumes
