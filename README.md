@@ -315,6 +315,7 @@ The TrueNAS CSI Driver supports Red Hat OpenShift 4.20+ and is designed for Oper
 - [Installation Guide](docs/openshift/installation.md) - Detailed installation steps
 - [Configuration Reference](docs/openshift/configuration.md) - CRD and StorageClass options
 - [Upgrade Guide](docs/openshift/upgrade.md) - Upgrade procedures
+- [Cluster Setup Guide](docs/openshift/cluster-setup.md) - Set up an OpenShift cluster on vSphere (agent-based install) for testing/certification
 - [Red Hat Certification Guide](docs/openshift/certification.md) - Certification process and requirements
 
 ## Demo Scripts

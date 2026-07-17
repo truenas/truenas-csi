@@ -6,6 +6,23 @@ resources:
 - ../samples
 - ../scorecard
 
+# OLM cannot install or manage NetworkPolicy objects, and the certified-operators
+# pipeline rejects bundles that contain them (check_network_policy_presence). Strip
+# the allow-metrics-traffic NetworkPolicy (inherited from ../default) out of the
+# generated bundle. It is intentionally kept in config/default for direct `make deploy`.
+patches:
+- target:
+    group: networking.k8s.io
+    version: v1
+    kind: NetworkPolicy
+    name: operator-allow-metrics-traffic
+  patch: |-
+    $patch: delete
+    apiVersion: networking.k8s.io/v1
+    kind: NetworkPolicy
+    metadata:
+      name: operator-allow-metrics-traffic
+
 # [WEBHOOK] To enable webhooks, uncomment all the sections with [WEBHOOK] prefix.
 # Do NOT uncomment sections with prefix [CERTMANAGER], as OLM does not support cert-manager.
 # These patches remove the unnecessary "cert" volume and its manager container volumeMount.
