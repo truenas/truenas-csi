@@ -1,19 +1,68 @@
-# Basic iSCSI StorageClass
-# Creates ReadWriteOnce block volumes backed by ZVOLs on TrueNAS
+# iSCSI StorageClass — full parameter reference
+# Creates ReadWriteOnce block volumes backed by ZVOLs on TrueNAS.
+#
+# NOTE: iSCSI portals must be IPv4. On IPv6-only clusters use NFS — the pinned
+# csi-lib-iscsi mis-parses IPv6 portals.
+#
+# Only "protocol" is required. Every other parameter below is optional; the value
+# shown is the default (commented) unless the line is uncommented. Parameters not
+# valid for iSCSI (e.g. nfs.*, nvmeof.*) are ignored if set.
 apiVersion: storage.k8s.io/v1
 kind: StorageClass
 metadata:
   name: truenas-iscsi
 provisioner: csi.truenas.io
 parameters:
-  # Storage protocol: nfs or iscsi
   protocol: "iscsi"
-  # ZFS compression
+
+  # --- Common (all protocols) ---
+  # ZFS pool for volumes. Default: the driver's TRUENAS_DEFAULT_POOL.
+  # pool: "pool01"
+  # Parent path for volume datasets, RELATIVE to the pool (no pool prefix, no
+  # leading/trailing "/", no ".."). WITHOUT this, volume datasets land at the POOL
+  # ROOT (pool/<pvc-name>); set it to keep CSI volumes grouped. With
+  # datasetPath: "k8s/iscsi" a volume becomes pool/k8s/iscsi/<pvc-name>.
+  datasetPath: "k8s/iscsi"
+  # ZFS compression: OFF, LZ4 (default), GZIP[-1|-9], ZSTD[-1..-9], ZLE, LZJB.
   compression: "LZ4"
-  # ZVOL block size: 512, 1K, 2K, 4K, 8K, 16K, 32K, 64K, 128K
+  # ZFS sync mode: STANDARD (default), ALWAYS, DISABLED.
+  # sync: "STANDARD"
+
+  # --- ZVOL (iSCSI and NVMe-oF) ---
+  # ZVOL block size: 512, 1K, 2K, 4K, 8K, 16K (default), 32K, 64K, 128K.
   volblocksize: "16K"
-  # iSCSI logical block size: 512, 1024, 2048, 4096
+  # Thin-provision the ZVOL. Default: false (thick / space reserved).
+  # sparse: "false"
+
+  # --- iSCSI ---
+  # iSCSI logical/physical block size: 512 (default), 1024, 2048, 4096.
   iscsi.blocksize: "4096"
+  # Restrict the target to specific initiator IQNs (comma-separated). Default: all.
+  # iscsi.initiators: "iqn.2024-01.com.example:node1,iqn.2024-01.com.example:node2"
+  # The IQN base is auto-derived from the appliance's iscsi.global.basename; only
+  # override for unusual setups.
+  # iscsi.iqn-base: "iqn.2005-10.org.freenas.ctl"
+  # CHAP / mutual CHAP authentication: see storageclass-iscsi-chap.yaml.
+  # Node-side session behavior:
+  # iscsi.multipathEnabled: "false"
+  # iscsi.persistentSessions: "false"
+
+  # --- Encryption (optional; see storageclass-encrypted.yaml) ---
+  # encryption: "true"
+  # encryption.algorithm: "AES-256-GCM"
+  # encryption.passphrase: "<passphrase>"     # or use a key / generateKey
+  # encryption.generateKey: "true"
+
+  # --- Scheduled snapshots (optional; omit snapshot.schedule to disable) ---
+  # snapshot.schedule: "0 2 * * *"            # cron: minute hour dom month dow
+  # snapshot.naming: "auto-%Y-%m-%d_%H-%M"     # strftime; this is the default
+  # snapshot.retention: "2"                    # count of retentionUnit (default 2)
+  # snapshot.retentionUnit: "WEEK"             # HOUR, DAY, WEEK (default), MONTH, YEAR
+  # snapshot.recursive: "false"
+
+  # --- Delete behavior (optional) ---
+  # forceDelete: "false"
+  # deleteExtentsWithTarget: "true"
 reclaimPolicy: Delete
 volumeBindingMode: Immediate
 allowVolumeExpansion: true

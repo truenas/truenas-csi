@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"slices"
@@ -144,6 +145,23 @@ func (h *ISCSIHandler) buildConnector(volumeID string, config *ISCSIConfig) *isc
 	return connector
 }
 
+// ensureIPv4Portal rejects IPv6 iSCSI portals with an actionable error. The pinned
+// csi-lib-iscsi mis-parses IPv6 portal addresses (it splits the portal on ":"), so
+// the device by-path it waits for never matches the real udev symlink and staging
+// fails after many retries with an opaque "failed to find device path". Fail fast
+// with a clear message instead. IPv6-only clusters should use NFS.
+func ensureIPv4Portal(portal string) error {
+	host := portal
+	if h, _, err := net.SplitHostPort(portal); err == nil {
+		host = h
+	}
+	host = strings.Trim(host, "[]")
+	if ip := net.ParseIP(host); ip != nil && ip.To4() == nil {
+		return fmt.Errorf("iSCSI portal %q is IPv6, which is not supported (csi-lib-iscsi mis-parses IPv6 portals) — use an IPv4 portal, or NFS on IPv6-only clusters", portal)
+	}
+	return nil
+}
+
 // Stage implements iSCSI volume staging (login and device setup)
 func (h *ISCSIHandler) Stage(ctx context.Context, req *StageRequest) (*StageResult, error) {
 	h.log.V(LogLevelDebug).Info("iSCSI Stage", "volumeId", req.VolumeID, "stagingPath", req.StagingPath, "isBlock", req.IsBlockVolume)
@@ -156,6 +174,10 @@ func (h *ISCSIHandler) Stage(ctx context.Context, req *StageRequest) (*StageResu
 
 	if config.TargetPortal == "" || config.TargetIQN == "" {
 		return nil, fmt.Errorf("iSCSI target portal and IQN are required (check StorageClass parameters and controller publish context)")
+	}
+
+	if err := ensureIPv4Portal(config.TargetPortal); err != nil {
+		return nil, err
 	}
 
 	// Build connector for csi-lib-iscsi

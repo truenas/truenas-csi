@@ -1,19 +1,59 @@
-# Basic NVMe-oF/TCP StorageClass
+# NVMe-oF/TCP StorageClass — full parameter reference
 # Creates ReadWriteOnce block volumes backed by ZVOLs on TrueNAS, exported over
 # NVMe over Fabrics (TCP). Requires TrueNAS SCALE 25.10+ with the NVMe-oF target
 # service enabled (System Settings -> Services -> NVMe-oF).
+#
+# Only "protocol" is required. Every other parameter below is optional; the value
+# shown is the default (commented) unless the line is uncommented. Parameters not
+# valid for NVMe-oF (e.g. nfs.*, iscsi.*) are ignored if set.
 apiVersion: storage.k8s.io/v1
 kind: StorageClass
 metadata:
   name: truenas-nvmeof
 provisioner: csi.truenas.io
 parameters:
-  # Storage protocol: nfs, iscsi, or nvmeof
   protocol: "nvmeof"
-  # ZFS compression
+
+  # --- Common (all protocols) ---
+  # ZFS pool for volumes. Default: the driver's TRUENAS_DEFAULT_POOL.
+  # pool: "pool01"
+  # Parent path for volume datasets, RELATIVE to the pool (no pool prefix, no
+  # leading/trailing "/", no ".."). WITHOUT this, volume datasets land at the POOL
+  # ROOT (pool/<pvc-name>); set it to keep CSI volumes grouped. With
+  # datasetPath: "k8s/nvmeof" a volume becomes pool/k8s/nvmeof/<pvc-name>.
+  datasetPath: "k8s/nvmeof"
+  # ZFS compression: OFF, LZ4 (default), GZIP[-1|-9], ZSTD[-1..-9], ZLE, LZJB.
   compression: "LZ4"
-  # ZVOL block size: 512, 1K, 2K, 4K, 8K, 16K, 32K, 64K, 128K
+  # ZFS sync mode: STANDARD (default), ALWAYS, DISABLED.
+  # sync: "STANDARD"
+
+  # --- ZVOL (iSCSI and NVMe-oF) ---
+  # ZVOL block size: 512, 1K, 2K, 4K, 8K, 16K (default), 32K, 64K, 128K.
   volblocksize: "16K"
+  # Thin-provision the ZVOL. Default: false (thick / space reserved).
+  # sparse: "false"
+
+  # --- NVMe-oF ---
+  # Restrict the subsystem to a specific host NQN. Default: allow any host.
+  # nvmeof.hostNQN: "nqn.2014-08.org.nvmexpress:uuid:<host-uuid>"
+  # DH-CHAP authentication (optional): see storageclass-nvmeof-dhchap.yaml.
+
+  # --- Encryption (optional; see storageclass-encrypted.yaml) ---
+  # encryption: "true"
+  # encryption.algorithm: "AES-256-GCM"
+  # encryption.passphrase: "<passphrase>"     # or use a key / generateKey
+  # encryption.generateKey: "true"
+
+  # --- Scheduled snapshots (optional; omit snapshot.schedule to disable) ---
+  # snapshot.schedule: "0 2 * * *"            # cron: minute hour dom month dow
+  # snapshot.naming: "auto-%Y-%m-%d_%H-%M"     # strftime; this is the default
+  # snapshot.retention: "2"                    # count of retentionUnit (default 2)
+  # snapshot.retentionUnit: "WEEK"             # HOUR, DAY, WEEK (default), MONTH, YEAR
+  # snapshot.recursive: "false"
+
+  # --- Delete behavior (optional) ---
+  # forceDelete: "false"
+  # deleteExtentsWithTarget: "true"
 reclaimPolicy: Delete
 volumeBindingMode: Immediate
 allowVolumeExpansion: true

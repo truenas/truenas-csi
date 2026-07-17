@@ -156,8 +156,14 @@ sudo systemctl enable microk8s-mount-propagation
 |-----------|-------------|--------|
 | `protocol` | Storage protocol | `nfs`, `iscsi`, `nvmeof` |
 | `pool` | ZFS pool (overrides default) | pool name |
-| `compression` | ZFS compression algorithm | `OFF`, `LZ4`, `GZIP`, `ZSTD`, `ZLE`, `LZJB` |
+| `datasetPath` | Parent path for volume datasets, **relative to the pool** (no pool prefix, no leading/trailing `/`, no `..`). If unset, volumes are created at the **pool root** (`pool/<pvc-name>`); e.g. `k8s/iscsi` → `pool/k8s/iscsi/<pvc-name>` | relative path |
+| `compression` | ZFS compression algorithm | `OFF`, `LZ4`, `GZIP[-1\|-9]`, `ZSTD[-1..-9]`, `ZLE`, `LZJB` |
 | `sync` | ZFS sync mode | `STANDARD`, `ALWAYS`, `DISABLED` |
+| `sparse` | Thin-provision the ZVOL (iSCSI/NVMe-oF); default `false` | `true`, `false` |
+
+Delete-time behavior (optional): `forceDelete` (`true`/`false`) forces removal of
+busy resources; `deleteExtentsWithTarget` (`true`/`false`, default `true`) removes
+the iSCSI extent along with its target.
 
 #### NFS Parameters
 
@@ -185,12 +191,19 @@ squashed. Requires the workload to set a pod `securityContext.fsGroup`. See
 |-----------|-------------|--------|
 | `volblocksize` | ZVOL block size | `512`, `1K`, `2K`, `4K`, `8K`, `16K`, `32K`, `64K`, `128K` |
 | `iscsi.blocksize` | iSCSI logical block size | `512`, `1024`, `2048`, `4096` |
+| `iscsi.iqn-base` | Override the IQN base (auto-derived from the appliance's `iscsi.global.basename` by default) | IQN string |
+| `iscsi.initiators` | Allowed initiator IQNs | comma-separated |
 | `iscsi.chapUser` | CHAP username | string |
 | `iscsi.chapSecret` | CHAP password (12-16 chars) | string |
 | `iscsi.chapPeerUser` | Mutual CHAP peer user | string |
 | `iscsi.chapPeerSecret` | Mutual CHAP peer password | string |
-| `iscsi.initiators` | Allowed initiator IQNs | comma-separated |
-| `iscsi.networks` | Allowed network CIDRs | comma-separated |
+| `iscsi.multipathEnabled` | Enable multipath for the session (node-side); default `false` | `true`, `false` |
+| `iscsi.persistentSessions` | Keep the iSCSI session persistent (node-side); default `false` | `true`, `false` |
+
+> **IPv4 only:** iSCSI portals must be IPv4. The pinned `csi-lib-iscsi` mis-parses
+> IPv6 portal addresses, so iSCSI staging fails on IPv6-only clusters — use NFS
+> there. The driver fails fast with a clear error if an IPv6 iSCSI portal is
+> configured.
 
 #### NVMe-oF Parameters
 

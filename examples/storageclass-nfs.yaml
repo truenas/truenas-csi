@@ -1,15 +1,59 @@
-# Basic NFS StorageClass
-# Creates ReadWriteMany volumes backed by NFS shares on TrueNAS
+# NFS StorageClass — full parameter reference
+# Creates ReadWriteMany volumes backed by NFS shares on TrueNAS.
+#
+# Only "protocol" is required. Every other parameter below is optional; the value
+# shown is the default (commented) unless the line is uncommented. Parameters not
+# valid for NFS (e.g. iscsi.*, nvmeof.*, volblocksize, sparse) are ignored if set.
 apiVersion: storage.k8s.io/v1
 kind: StorageClass
 metadata:
   name: truenas-nfs
 provisioner: csi.truenas.io
 parameters:
-  # Storage protocol: nfs or iscsi
   protocol: "nfs"
-  # ZFS compression (optional): OFF, LZ4, GZIP, ZSTD, ZLE, LZJB
+
+  # --- Common (all protocols) ---
+  # ZFS pool for volumes. Default: the driver's TRUENAS_DEFAULT_POOL.
+  # pool: "pool01"
+  # Parent path for volume datasets, RELATIVE to the pool (no pool prefix, no
+  # leading/trailing "/", no ".."). WITHOUT this, volume datasets land at the POOL
+  # ROOT (pool/<pvc-name>); set it to keep CSI volumes grouped. With
+  # datasetPath: "k8s/nfs" a volume becomes pool/k8s/nfs/<pvc-name>.
+  datasetPath: "k8s/nfs"
+  # ZFS compression: OFF, LZ4 (default), GZIP[-1|-9], ZSTD[-1..-9], ZLE, LZJB.
   compression: "LZ4"
+  # ZFS sync mode: STANDARD (default), ALWAYS, DISABLED.
+  # sync: "STANDARD"
+
+  # --- NFS ---
+  # Extra client mount options (comma-separated).
+  # nfs.mountOptions: "hard,nfsvers=4.1"
+  # Restrict the export to specific hosts / networks (comma-separated).
+  # nfs.hosts: "10.0.0.10,10.0.0.11"
+  # nfs.networks: "10.0.0.0/8,192.168.1.0/24"
+  # User/group all access is squashed to (mapall). Defaults root / wheel.
+  # nfs.mapAllUser: "root"
+  # nfs.mapAllGroup: "wheel"
+  # Set false for no_root_squash so a pod fsGroup can own the volume root —
+  # required for ownership-sensitive non-root workloads (see
+  # storageclass-nfs-fsgroup.yaml). Default: true (mapall in force).
+  # nfs.rootSquash: "true"
+
+  # --- Encryption (optional; see storageclass-encrypted.yaml) ---
+  # encryption: "true"
+  # encryption.algorithm: "AES-256-GCM"
+  # encryption.passphrase: "<passphrase>"     # or use a key / generateKey
+  # encryption.generateKey: "true"
+
+  # --- Scheduled snapshots (optional; omit snapshot.schedule to disable) ---
+  # snapshot.schedule: "0 2 * * *"            # cron: minute hour dom month dow
+  # snapshot.naming: "auto-%Y-%m-%d_%H-%M"     # strftime; this is the default
+  # snapshot.retention: "2"                    # count of retentionUnit (default 2)
+  # snapshot.retentionUnit: "WEEK"             # HOUR, DAY, WEEK (default), MONTH, YEAR
+  # snapshot.recursive: "false"
+
+  # --- Delete behavior (optional) ---
+  # forceDelete: "false"
 reclaimPolicy: Delete
 volumeBindingMode: Immediate
 allowVolumeExpansion: true
