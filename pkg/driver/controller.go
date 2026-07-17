@@ -1068,6 +1068,26 @@ func copyParameters(m map[string]string) map[string]string {
 }
 
 // createISCSIVolume creates a ZVOL with iSCSI target, extent, and optional CHAP authentication.
+// bridgeISCSICHAPParams copies the controller-side CHAP StorageClass parameters
+// (used to create the TrueNAS target auth) into the node-side names the node reads
+// from the volume context to authenticate the session, so a StorageClass only
+// needs to specify the credentials once. Standard CHAP (iscsi.chapUser/chapSecret)
+// maps to the initiator's outgoing credentials (iscsi.chapUsername/chapPassword);
+// mutual CHAP (iscsi.chapPeerUser/chapPeerSecret) maps to the incoming credentials
+// the initiator expects the target to present (iscsi.chapUsernameIn/chapPasswordIn).
+// An explicitly-set node-side value is left untouched.
+func bridgeISCSICHAPParams(parameters map[string]string) {
+	copyIfUnset := func(dst, src string) {
+		if parameters[dst] == "" && parameters[src] != "" {
+			parameters[dst] = parameters[src]
+		}
+	}
+	copyIfUnset(paramCHAPUsername, paramISCSIChapUser)
+	copyIfUnset(paramCHAPPassword, paramISCSIChapSecret)
+	copyIfUnset(paramCHAPUsernameIn, paramISCSIChapPeerUser)
+	copyIfUnset(paramCHAPPasswordIn, paramISCSIChapPeerSecret)
+}
+
 func (s *ControllerServer) createISCSIVolume(ctx context.Context, volumeID, datasetPath string, capacityBytes int64, parameters map[string]string) (*VolumeInfo, error) {
 	portalID, err := s.driver.ISCSIPortalID(ctx)
 	if err != nil {
@@ -1119,6 +1139,11 @@ func (s *ControllerServer) createISCSIVolume(ctx context.Context, volumeID, data
 		authID = auth.ID
 		authTag = auth.Tag
 		s.driver.Log().V(LogLevelDebug).Info("Created CHAP auth for iSCSI target", "authId", authID, "tag", authTag, "user", chapUser)
+
+		// The target now requires CHAP; make sure the node can authenticate by
+		// mirroring the credentials into the node-side parameters carried in the
+		// volume context.
+		bridgeISCSICHAPParams(parameters)
 	}
 
 	// Create initiator group if specified
