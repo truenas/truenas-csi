@@ -146,6 +146,49 @@ func TestIntegration_Ping(t *testing.T) {
 	}
 }
 
+// The keepalive loop pings with an API call so it also exercises the session, not
+// just the socket. Verify the appliance accepts those pings and the connection
+// survives several of them.
+func TestIntegration_KeepAlive(t *testing.T) {
+	url := os.Getenv("TRUENAS_URL")
+	apiKey := os.Getenv("TRUENAS_API_KEY")
+	insecure := os.Getenv("TRUENAS_INSECURE_SKIP_VERIFY") != "false"
+
+	var tlsConfig *tls.Config
+	if insecure {
+		tlsConfig = &tls.Config{InsecureSkipVerify: true}
+	}
+
+	const pingInterval = 1 * time.Second
+
+	client := New(Config{
+		URL:          url,
+		APIKey:       apiKey,
+		TLSConfig:    tlsConfig,
+		CallTimeout:  30 * time.Second,
+		PingInterval: pingInterval,
+	})
+	defer client.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	if err := client.Connect(ctx); err != nil {
+		t.Fatalf("Connect failed: %v", err)
+	}
+
+	// Let several keepalive pings run. A failing ping would drop the connection.
+	time.Sleep(3*pingInterval + 500*time.Millisecond)
+
+	if !client.Connected() {
+		t.Fatal("connection did not survive the keepalive pings")
+	}
+
+	if err := client.Ping(ctx); err != nil {
+		t.Fatalf("call after keepalive pings failed: %v", err)
+	}
+}
+
 // =============================================================================
 // Dataset Tests
 // =============================================================================
