@@ -40,6 +40,16 @@ const (
 	rpcErrCodeNotFound       = -6 // ENOENT - resource not found
 	rpcErrCodeConnectionLost = -1 // Internal error for connection loss
 
+	// TrueNAS reports method call errors with a generic JSON-RPC code and carries the
+	// real errno in the error's data, so an expired session is identified by these
+	// rather than by the RPC code.
+	truenasErrnoNotAuthenticated = 207 // middlewared ErrnoMixin.ENOTAUTHENTICATED
+	errnameNotAuthenticated      = "ENOTAUTHENTICATED"
+
+	// API methods called directly by the client
+	methodCorePing            = "core.ping"
+	methodAuthLoginWithAPIKey = "auth.login_with_api_key"
+
 	// Logging verbosity levels (for logr.Logger.V())
 	// V(0) - Always logged (critical errors, startup/shutdown)
 	// V(1) - General operational info (connection events, reconnection)
@@ -146,6 +156,35 @@ func IsNotFoundError(err error) bool {
 		}
 	}
 	return false
+}
+
+// IsNotAuthenticatedError reports whether err indicates the TrueNAS session is no
+// longer authenticated. The appliance can expire a session while the WebSocket stays
+// open, in which case every call fails this way until the client re-authenticates.
+func IsNotAuthenticatedError(err error) bool {
+	if err == nil {
+		return false
+	}
+	var rpcErr *RPCError
+	if !errors.As(err, &rpcErr) {
+		return false
+	}
+
+	// TrueNAS nests the errno and its name in the error's data.
+	if len(rpcErr.Data) > 0 {
+		var data struct {
+			Error   int    `json:"error"`
+			Errname string `json:"errname"`
+		}
+		if err := json.Unmarshal(rpcErr.Data, &data); err == nil {
+			if data.Error == truenasErrnoNotAuthenticated || data.Errname == errnameNotAuthenticated {
+				return true
+			}
+		}
+	}
+
+	// Fall back to the message for API shapes that do not populate data.
+	return strings.Contains(strings.ToUpper(rpcErr.Message), errnameNotAuthenticated)
 }
 
 // request represents a JSON-RPC request.
@@ -311,7 +350,7 @@ func (c *Client) dial(ctx context.Context) error {
 
 	authReq := request{
 		ID:      c.nextID.Add(1),
-		Method:  "auth.login_with_api_key",
+		Method:  methodAuthLoginWithAPIKey,
 		Params:  []string{c.config.APIKey},
 		JSONRPC: jsonRPCVersion,
 	}
@@ -409,22 +448,32 @@ func (c *Client) pingLoop(conn *websocket.Conn, done chan struct{}) {
 		case <-done:
 			return
 		case <-ticker.C:
+			// Ping with an API call rather than a WebSocket protocol ping: a protocol
+			// ping keeps the socket alive but never exercises the session, so an
+			// expired session would go unnoticed until a user request failed. This
+			// both keeps the session active and detects an expired one.
 			pingCtx, cancel := context.WithTimeout(context.Background(), defaultPingTimeout)
-			err := conn.Ping(pingCtx)
+			err := c.callOn(pingCtx, conn, methodCorePing, nil, nil)
 			cancel()
 
-			if err != nil {
-				select {
-				case <-done:
-					return
-				default:
-					c.log.V(logLevelInfo).Info("TrueNAS ping failed - connection lost", "error", err)
-					c.handleDisconnect(conn)
-					return
-				}
-			} else {
+			if err == nil {
 				c.log.V(logLevelDebug).Info("TrueNAS ping successful")
+				continue
 			}
+
+			select {
+			case <-done:
+				return
+			default:
+			}
+
+			if IsNotAuthenticatedError(err) {
+				c.log.Info("TrueNAS session is no longer authenticated, reconnecting to re-authenticate")
+			} else {
+				c.log.V(logLevelInfo).Info("TrueNAS ping failed - connection lost", "error", err)
+			}
+			c.handleDisconnect(conn)
+			return
 		}
 	}
 }
@@ -543,6 +592,8 @@ func (c *Client) Call(ctx context.Context, method string, params, result any) er
 	}
 	defer c.callSem.Release(1)
 
+	reauthenticated := false
+
 	for {
 		c.connMu.RLock()
 		conn := c.conn
@@ -565,6 +616,20 @@ func (c *Client) Call(ctx context.Context, method string, params, result any) er
 			c.log.V(logLevelInfo).Info("Retrying after connection loss", "method", method)
 			if waitErr := c.waitForConnection(ctx); waitErr != nil {
 				return err // Return original error if we can't reconnect in time
+			}
+			continue
+		}
+
+		// The appliance can expire the session while the socket stays healthy, which
+		// leaves every subsequent call failing. Dropping the connection makes the
+		// reconnect loop dial again, and dial re-authenticates. Retry only once so a
+		// genuinely rejected API key surfaces instead of looping.
+		if !reauthenticated && IsNotAuthenticatedError(err) {
+			reauthenticated = true
+			c.log.Info("TrueNAS session is no longer authenticated, reconnecting", "method", method)
+			c.handleDisconnect(conn)
+			if waitErr := c.waitForConnection(ctx); waitErr != nil {
+				return err // Return original error if we can't re-authenticate in time
 			}
 			continue
 		}
@@ -681,5 +746,5 @@ func (c *Client) Close() error {
 
 // Ping checks if the server is responsive by calling core.ping.
 func (c *Client) Ping(ctx context.Context) error {
-	return c.Call(ctx, "core.ping", nil, nil)
+	return c.Call(ctx, methodCorePing, nil, nil)
 }
