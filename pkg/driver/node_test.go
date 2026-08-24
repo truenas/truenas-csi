@@ -402,3 +402,36 @@ func TestWithCommandOutput(t *testing.T) {
 		t.Errorf("withCommandOutput() = %v, want the original error", got)
 	}
 }
+
+// TrueNAS storage is reachable from every node, so the driver must not report an
+// accessible topology. A reported segment becomes node affinity on the PV, and a
+// node label holds one value per key, so any volume whose segment does not match
+// what the nodes advertise can never be scheduled.
+func TestNodeGetInfo_ReportsNoTopology(t *testing.T) {
+	ns, _ := newTestNodeServer(t, nil)
+	ns.driver.nodeID = "worker-1"
+
+	resp, err := ns.NodeGetInfo(context.Background(), &csi.NodeGetInfoRequest{})
+	if err != nil {
+		t.Fatalf("NodeGetInfo() = %v", err)
+	}
+	if resp.NodeId != "worker-1" {
+		t.Errorf("NodeId = %q, want %q", resp.NodeId, "worker-1")
+	}
+	if resp.AccessibleTopology != nil {
+		t.Errorf("NodeGetInfo reported topology %v, want none", resp.AccessibleTopology.Segments)
+	}
+}
+
+// The plugin must not claim topology support while reporting no topology: the
+// combination is what lets the provisioner pin PVs to labels no node carries.
+func TestPluginCapabilities_ExcludeAccessibilityConstraints(t *testing.T) {
+	d := &Driver{}
+	d.initializeCapabilities()
+
+	for _, c := range d.pluginCaps {
+		if c.GetService().GetType() == csi.PluginCapability_Service_VOLUME_ACCESSIBILITY_CONSTRAINTS {
+			t.Error("driver advertises VOLUME_ACCESSIBILITY_CONSTRAINTS but reports no topology")
+		}
+	}
+}

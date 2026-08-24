@@ -269,7 +269,8 @@ spec:
           args:
             - "--csi-address=$(ADDRESS)"
             - "--v=5"
-            - "--feature-gates=Topology=true"
+            # No Topology feature gate: the driver reports no accessible topology,
+            # so there is nothing for the provisioner to constrain PVs by.
             - "--extra-create-metadata"
             - "--leader-election=true"
             - "--default-fstype=ext4"

@@ -469,21 +469,21 @@ func (s *NodeServer) NodeUnpublishVolume(ctx context.Context, req *csi.NodeUnpub
 	return &csi.NodeUnpublishVolumeResponse{}, nil
 }
 
-// NodeGetInfo returns the node ID and topology information.
+// NodeGetInfo returns the node ID.
+//
+// No accessible topology is reported. TrueNAS storage is network-attached and every
+// protocol the driver speaks (NFS, iSCSI, NVMe-oF) is reachable from any node with
+// network access, so there is no per-node locality to encode. Reporting a segment
+// only lets the provisioner stamp node affinity onto a PV, and since a node label
+// holds one value per key, any volume whose segment does not match what the nodes
+// happen to advertise becomes permanently unschedulable. The driver does not
+// advertise VOLUME_ACCESSIBILITY_CONSTRAINTS for the same reason.
 func (s *NodeServer) NodeGetInfo(ctx context.Context, req *csi.NodeGetInfoRequest) (*csi.NodeGetInfoResponse, error) {
 	s.driver.Log().V(LogLevelDebug).Info("NodeGetInfo called")
 
 	return &csi.NodeGetInfoResponse{
 		NodeId: s.driver.NodeID(),
 		// MaxVolumesPerNode: 0 means no limit
-		// No pool-based topology: TrueNAS storage (NFS/iSCSI/NVMe-oF) is
-		// network-attached and reachable from every node, so volumes must not be
-		// constrained to a pool's node label. Only the per-node key is advertised.
-		AccessibleTopology: &csi.Topology{
-			Segments: map[string]string{
-				"topology.truenas.io/node": s.driver.NodeID(),
-			},
-		},
 	}, nil
 }
 
