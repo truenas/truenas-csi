@@ -6,7 +6,7 @@ REGISTRY ?= quay.io/truenas_solutions
 DRIVER_IMAGE ?= $(REGISTRY)/truenas-csi
 OPERATOR_IMAGE ?= $(REGISTRY)/truenas-csi-operator
 BUNDLE_IMAGE ?= $(REGISTRY)/truenas-csi-operator-bundle
-VERSION ?= 1.1.2
+VERSION ?= 1.2.0
 IMG_TAG ?= v$(VERSION)
 
 # Go configuration
