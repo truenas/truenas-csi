@@ -836,7 +836,8 @@ func (r *TrueNASCSIReconciler) buildProvisionerSidecar() corev1.Container {
 		Args: []string{
 			"--csi-address=/csi/csi.sock",
 			fmt.Sprintf("--v=%d", SidecarLogLevel),
-			"--feature-gates=Topology=true",
+			// No Topology feature gate: the driver reports no accessible topology,
+			// so there is nothing for the provisioner to constrain PVs by.
 			"--extra-create-metadata",
 			"--leader-election=true",
 			fmt.Sprintf("--default-fstype=%s", DefaultFSType),

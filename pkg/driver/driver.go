@@ -770,13 +770,9 @@ func (d *Driver) initializeCapabilities() {
 				},
 			},
 		},
-		{
-			Type: &csi.PluginCapability_Service_{
-				Service: &csi.PluginCapability_Service{
-					Type: csi.PluginCapability_Service_VOLUME_ACCESSIBILITY_CONSTRAINTS,
-				},
-			},
-		},
+		// VOLUME_ACCESSIBILITY_CONSTRAINTS is deliberately absent: TrueNAS storage is
+		// network-attached and reachable from every node, so no volume is bound to a
+		// subset of them. See NodeGetInfo.
 		{
 			Type: &csi.PluginCapability_VolumeExpansion_{
 				VolumeExpansion: &csi.PluginCapability_VolumeExpansion{
