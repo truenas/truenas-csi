@@ -197,7 +197,7 @@ func (h *ISCSIHandler) Stage(ctx context.Context, req *StageRequest) (*StageResu
 	h.log.V(LogLevelDebug).Info("Connecting to iSCSI target", "portal", config.TargetPortal, "iqn", config.TargetIQN, "lun", config.LUN)
 	devicePath, err := iscsilib.Connect(*connector)
 	if err != nil {
-		return nil, fmt.Errorf("failed to connect to iSCSI target %s at %s: %w", config.TargetIQN, config.TargetPortal, err)
+		return nil, fmt.Errorf("failed to connect to iSCSI target %s at %s: %w", config.TargetIQN, config.TargetPortal, withCommandOutput(err))
 	}
 
 	h.log.V(LogLevelDebug).Info("iSCSI connected", "device", devicePath)
@@ -343,12 +343,12 @@ var logoutISCSITarget = func(targetIQN string, portals []string) error {
 			host = h
 		}
 		if err := iscsilib.Logout(targetIQN, host); err != nil && !isNoISCSIObjectsFound(err) {
-			return fmt.Errorf("logout from portal %s failed: %w", portal, err)
+			return fmt.Errorf("logout from portal %s failed: %w", portal, withCommandOutput(err))
 		}
 	}
 
 	if err := iscsilib.DeleteDBEntry(targetIQN); err != nil && !isNoISCSIObjectsFound(err) {
-		return fmt.Errorf("removing the node database entry failed: %w", err)
+		return fmt.Errorf("removing the node database entry failed: %w", withCommandOutput(err))
 	}
 	return nil
 }
@@ -358,6 +358,17 @@ var logoutISCSITarget = func(targetIQN string, portals []string) error {
 func isNoISCSIObjectsFound(err error) bool {
 	var exitErr *exec.ExitError
 	return errors.As(err, &exitErr) && exitErr.ExitCode() == iscsiadmExitNoObjsFound
+}
+
+// withCommandOutput appends a failed command's stderr to its error. csi-lib-iscsi
+// surfaces only the exit status, which reduces a plain diagnosis - an iscsiadm the
+// host cannot run, say - to an opaque "exit status 127" with nothing to act on.
+func withCommandOutput(err error) error {
+	var exitErr *exec.ExitError
+	if errors.As(err, &exitErr) && len(exitErr.Stderr) > 0 {
+		return fmt.Errorf("%w: %s", err, strings.TrimSpace(string(exitErr.Stderr)))
+	}
+	return err
 }
 
 // readConnectorDirect reads a connector file without validation

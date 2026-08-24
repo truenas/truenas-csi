@@ -152,6 +152,24 @@ const (
 const (
 	ISCSILockDir    = "/run/lock/iscsi"
 	ISCSIDaemonPath = "/usr/sbin/iscsid"
+
+	// ContainerISCSIAdmPath is where the node container's own iscsiadm lives, and
+	// so where the shim that forwards to the host's has to be written.
+	ContainerISCSIAdmPath = "/usr/sbin/iscsiadm"
+
+	// ISCSIAdmBinary is how the host's iscsiadm is invoked: by name, so it is found
+	// on PATH. Distributions disagree on where it lives (/usr/sbin on Debian and
+	// RHEL, /usr/local/sbin on Talos), and naming an absolute path makes execvp
+	// skip the PATH search and fail with a bare exit 127.
+	ISCSIAdmBinary = "iscsiadm"
+
+	// HostMountNamespace is the host's mount namespace as seen from the node
+	// container, which nsenter joins to reach the host's storage tooling.
+	HostMountNamespace = "/host/proc/1/ns/mnt"
+
+	// HostBinarySearchPath is the PATH host binaries are looked up on, set
+	// explicitly so the lookup does not depend on the container image's default.
+	HostBinarySearchPath = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 )
 
 // Sidecar image environment variable names

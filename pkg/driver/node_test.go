@@ -6,6 +6,7 @@ import (
 	osexec "os/exec"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"syscall"
 	"testing"
 
@@ -376,4 +377,28 @@ func exitError(t *testing.T, code int) error {
 		t.Fatalf("expected a non-zero exit for code %d", code)
 	}
 	return err
+}
+
+// csi-lib-iscsi reports only an exit status, so a host that cannot run iscsiadm
+// surfaced as a bare "exit status 127" with nothing to act on. The command's stderr
+// is what names the real problem.
+func TestWithCommandOutput(t *testing.T) {
+	cmd := osexec.Command("sh", "-c", "echo 'nsenter: failed to execute iscsiadm: No such file or directory' >&2; exit 127")
+	if _, err := cmd.Output(); err == nil {
+		t.Fatal("expected the command to fail")
+	} else {
+		enriched := withCommandOutput(err)
+		if !strings.Contains(enriched.Error(), "failed to execute iscsiadm") {
+			t.Errorf("stderr was not surfaced: %v", enriched)
+		}
+		if !strings.Contains(enriched.Error(), "exit status 127") {
+			t.Errorf("exit status was lost: %v", enriched)
+		}
+	}
+
+	// Errors that carry no command output are passed through untouched.
+	plain := syscall.EIO
+	if got := withCommandOutput(plain); got != plain {
+		t.Errorf("withCommandOutput() = %v, want the original error", got)
+	}
 }
