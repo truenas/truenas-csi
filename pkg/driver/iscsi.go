@@ -3,9 +3,11 @@ package driver
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"strconv"
@@ -26,12 +28,13 @@ const (
 	paramMultipathEnabled   = "iscsi.multipathEnabled"
 	paramPersistentSessions = "iscsi.persistentSessions"
 
-	// Directory for storing csi-lib-iscsi connector files
-	connectorDir = "/var/lib/truenas-csi/connectors"
-
 	// iSCSI connection settings
 	iscsiRetryCount    = 10 // number of login attempts
 	iscsiCheckInterval = 1  // seconds between retries
+
+	// iscsiadmExitNoObjsFound is iscsiadm's ISCSI_ERR_NO_OBJS_FOUND: the record or
+	// session asked about does not exist.
+	iscsiadmExitNoObjsFound = 21
 
 	// Filesystem types
 	fsTypeXFS = "xfs"
@@ -40,6 +43,13 @@ const (
 	mountOptionNouuid = "nouuid"
 	mountOptionBind   = "bind"
 )
+
+// connectorDir holds the per-volume connector files for iSCSI and NVMe-oF. It must
+// be backed by a host path in the node plugin's pod spec: it records which protocol
+// and target each staged volume uses, and NodeUnstageVolume gets no publish context
+// to fall back on, so losing it on a container restart strands staged volumes (see
+// handlerForVolume for the recovery path). Overridable in tests.
+var connectorDir = "/var/lib/truenas-csi/connectors"
 
 // ISCSIHandler implements the ProtocolHandler interface for iSCSI volumes
 type ISCSIHandler struct {
@@ -260,8 +270,7 @@ func (h *ISCSIHandler) Unstage(ctx context.Context, req *UnstageRequest) error {
 		if os.IsNotExist(err) {
 			h.log.V(LogLevelDebug).Info("Staging path does not exist, considering unstaged", "stagingPath", req.StagingPath)
 			// Still try to disconnect iSCSI and cleanup connector
-			h.cleanupISCSISession(req.VolumeID)
-			return nil
+			return h.cleanupISCSISession(req.VolumeID)
 		}
 		return fmt.Errorf("failed to check mount point: %w", err)
 	}
@@ -274,7 +283,9 @@ func (h *ISCSIHandler) Unstage(ctx context.Context, req *UnstageRequest) error {
 	}
 
 	// Disconnect iSCSI session and cleanup
-	h.cleanupISCSISession(req.VolumeID)
+	if err := h.cleanupISCSISession(req.VolumeID); err != nil {
+		return err
+	}
 
 	// Remove staging directory
 	os.Remove(req.StagingPath)
@@ -283,11 +294,16 @@ func (h *ISCSIHandler) Unstage(ctx context.Context, req *UnstageRequest) error {
 	return nil
 }
 
-// cleanupISCSISession disconnects the iSCSI session and removes the connector file
-func (h *ISCSIHandler) cleanupISCSISession(volumeID string) {
+// cleanupISCSISession logs out of the iSCSI session and removes the connector file.
+//
+// The connector file is the only record of the volume's protocol and target, so it
+// is kept when logout fails: removing it would leave later unstage attempts unable
+// to recognize the volume as iSCSI. The failure is returned rather than swallowed so
+// the CSI call is retried instead of reporting a teardown that did not happen.
+func (h *ISCSIHandler) cleanupISCSISession(volumeID string) error {
 	cpath := connectorPath(volumeID)
 	if _, err := os.Stat(cpath); err != nil {
-		return // No connector file, nothing to clean up
+		return nil // No connector file, nothing to clean up
 	}
 
 	// Try to load connector - GetConnectorFromFile may fail validation if
@@ -301,12 +317,47 @@ func (h *ISCSIHandler) cleanupISCSISession(volumeID string) {
 	}
 
 	if connector != nil && connector.TargetIqn != "" {
-		iscsilib.Disconnect(connector.TargetIqn, connector.TargetPortals)
+		if err := logoutISCSITarget(connector.TargetIqn, connector.TargetPortals); err != nil {
+			return fmt.Errorf("failed to log out of iSCSI target %s: %w", connector.TargetIqn, err)
+		}
 		h.log.V(LogLevelDebug).Info("Disconnected from iSCSI target", "targetIqn", connector.TargetIqn)
 	}
 
 	// Remove connector file
-	os.Remove(cpath)
+	if err := os.Remove(cpath); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("failed to remove connector file %s: %w", cpath, err)
+	}
+	return nil
+}
+
+// logoutISCSITarget logs out of every portal of a target and drops its node
+// database entry. csi-lib-iscsi's Disconnect helper does the same work but discards
+// every error and gives the caller no way to tell a completed logout from a failed
+// one, so its finer-grained calls are used directly here. Overridable in tests.
+var logoutISCSITarget = func(targetIQN string, portals []string) error {
+	for _, portal := range portals {
+		// Node records are keyed by portal address; matching without the port
+		// covers records written for a non-default port.
+		host := portal
+		if h, _, err := net.SplitHostPort(portal); err == nil {
+			host = h
+		}
+		if err := iscsilib.Logout(targetIQN, host); err != nil && !isNoISCSIObjectsFound(err) {
+			return fmt.Errorf("logout from portal %s failed: %w", portal, err)
+		}
+	}
+
+	if err := iscsilib.DeleteDBEntry(targetIQN); err != nil && !isNoISCSIObjectsFound(err) {
+		return fmt.Errorf("removing the node database entry failed: %w", err)
+	}
+	return nil
+}
+
+// isNoISCSIObjectsFound reports whether an iscsiadm call failed only because what it
+// was asked about is not present, which makes logout idempotent.
+func isNoISCSIObjectsFound(err error) bool {
+	var exitErr *exec.ExitError
+	return errors.As(err, &exitErr) && exitErr.ExitCode() == iscsiadmExitNoObjsFound
 }
 
 // readConnectorDirect reads a connector file without validation

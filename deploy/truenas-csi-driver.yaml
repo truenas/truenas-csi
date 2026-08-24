@@ -447,6 +447,8 @@ spec:
             - name: iscsi-lib
               mountPath: /var/lib/iscsi
               mountPropagation: Bidirectional
+            - name: connector-dir
+              mountPath: /var/lib/truenas-csi
             - name: host-root
               mountPath: /host
               mountPropagation: Bidirectional
@@ -521,6 +523,13 @@ spec:
         - name: iscsi-lib
           hostPath:
             path: /var/lib/iscsi
+            type: DirectoryOrCreate
+        # Per-volume connector files record the protocol and target of each staged
+        # volume. NodeUnstageVolume gets no publish context, so this state has to
+        # outlive the container.
+        - name: connector-dir
+          hostPath:
+            path: /var/lib/truenas-csi
             type: DirectoryOrCreate
         - name: host-root
           hostPath:

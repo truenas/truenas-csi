@@ -397,8 +397,7 @@ func (h *NVMeOFHandler) Unstage(ctx context.Context, req *UnstageRequest) error 
 	notMounted, err := h.mounter.IsLikelyNotMountPoint(req.StagingPath)
 	if err != nil {
 		if os.IsNotExist(err) {
-			h.cleanupNVMeSession(ctx, req.VolumeID)
-			return nil
+			return h.cleanupNVMeSession(ctx, req.VolumeID)
 		}
 		return fmt.Errorf("failed to check mount point: %w", err)
 	}
@@ -409,7 +408,9 @@ func (h *NVMeOFHandler) Unstage(ctx context.Context, req *UnstageRequest) error 
 		}
 	}
 
-	h.cleanupNVMeSession(ctx, req.VolumeID)
+	if err := h.cleanupNVMeSession(ctx, req.VolumeID); err != nil {
+		return err
+	}
 	os.Remove(req.StagingPath)
 
 	h.log.V(LogLevelDebug).Info("NVMe-oF volume unstaged", "volumeId", req.VolumeID)
@@ -417,14 +418,43 @@ func (h *NVMeOFHandler) Unstage(ctx context.Context, req *UnstageRequest) error 
 }
 
 // cleanupNVMeSession disconnects the subsystem and removes the connector file.
-func (h *NVMeOFHandler) cleanupNVMeSession(ctx context.Context, volumeID string) {
+//
+// The connector file is the only record of the volume's protocol and subsystem, so
+// it is kept when the disconnect fails: removing it would leave later unstage
+// attempts unable to recognize the volume as NVMe-oF. The failure is returned rather
+// than swallowed so the CSI call is retried instead of reporting a teardown that did
+// not happen.
+func (h *NVMeOFHandler) cleanupNVMeSession(ctx context.Context, volumeID string) error {
 	info := h.loadConnector(volumeID)
-	if info != nil && info.SubNQN != "" {
+	// Disconnecting a subsystem that is not connected is an error in nvme-cli, so
+	// the check keeps repeated unstage attempts idempotent.
+	if info != nil && info.SubNQN != "" && nvmeSubsystemConnected(info.SubNQN) {
 		if err := h.nvmeDisconnect(ctx, info.SubNQN); err != nil {
-			h.log.V(LogLevelDebug).Info("Failed to disconnect NVMe-oF subsystem", "subnqn", info.SubNQN, "error", err)
+			return fmt.Errorf("failed to disconnect NVMe-oF subsystem %s: %w", info.SubNQN, err)
 		}
 	}
-	os.Remove(nvmeConnectorPath(volumeID))
+	if err := os.Remove(nvmeConnectorPath(volumeID)); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("failed to remove connector file: %w", err)
+	}
+	return nil
+}
+
+// nvmeSubsystemConnected reports whether any local controller is attached to subnqn.
+func nvmeSubsystemConnected(subnqn string) bool {
+	if subnqn == "" {
+		return false
+	}
+	entries, err := os.ReadDir(nvmeSysClassDir)
+	if err != nil {
+		return false
+	}
+	for _, e := range entries {
+		data, err := os.ReadFile(filepath.Join(nvmeSysClassDir, e.Name(), "subsysnqn"))
+		if err == nil && strings.TrimSpace(string(data)) == subnqn {
+			return true
+		}
+	}
+	return false
 }
 
 // Publish bind-mounts the staged volume (or block device) to the target path.
