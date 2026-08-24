@@ -25,6 +25,7 @@ func buildNodeVolumes() []corev1.Volume {
 		hostPathVolume(VolumeModulesDir, HostPathModulesDir, &hostPathDirectory),
 		hostPathVolume(VolumeISCSIDir, HostPathISCSIDir, &hostPathDirectory),
 		hostPathVolume(VolumeISCSILib, HostPathISCSILib, &hostPathDirectoryOrCreate),
+		hostPathVolume(VolumeConnectorDir, HostPathConnectorDir, &hostPathDirectoryOrCreate),
 		hostPathVolume(VolumeHostRoot, HostPathRoot, &hostPathDirectory),
 		hostPathVolume(VolumeSocketDir, HostPathPluginDir, &hostPathDirectoryOrCreate),
 		hostPathVolume(VolumeHostFstab, HostPathFstab, &hostPathFileOrCreate),
@@ -68,6 +69,7 @@ func buildNodeVolumeMounts() []corev1.VolumeMount {
 		{Name: VolumeModulesDir, MountPath: "/lib/modules", ReadOnly: true},
 		{Name: VolumeISCSIDir, MountPath: "/etc/iscsi", MountPropagation: &mountPropagationBidirectional},
 		{Name: VolumeISCSILib, MountPath: "/var/lib/iscsi", MountPropagation: &mountPropagationBidirectional},
+		{Name: VolumeConnectorDir, MountPath: HostPathConnectorDir},
 		{Name: VolumeHostRoot, MountPath: "/host", MountPropagation: &mountPropagationBidirectional},
 		{Name: VolumeHostFstab, MountPath: "/etc/fstab"},
 	}

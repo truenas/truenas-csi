@@ -67,6 +67,7 @@ const (
 	VolumeModulesDir      = "modules-dir"
 	VolumeISCSIDir        = "iscsi-dir"
 	VolumeISCSILib        = "iscsi-lib"
+	VolumeConnectorDir    = "connector-dir"
 	VolumeHostRoot        = "host-root"
 	VolumeHostFstab       = "host-fstab"
 )
@@ -80,8 +81,13 @@ const (
 	HostPathModulesDir      = "/lib/modules"
 	HostPathISCSIDir        = "/etc/iscsi"
 	HostPathISCSILib        = "/var/lib/iscsi"
-	HostPathRoot            = "/"
-	HostPathFstab           = "/etc/fstab"
+	// HostPathConnectorDir keeps the driver's per-volume connector files on the
+	// node. They record which protocol and target each staged volume uses, and
+	// NodeUnstageVolume has no publish context to fall back on, so a container
+	// restart must not take them with it.
+	HostPathConnectorDir = "/var/lib/truenas-csi"
+	HostPathRoot         = "/"
+	HostPathFstab        = "/etc/fstab"
 )
 
 // CSI socket paths
