@@ -371,7 +371,14 @@ spec:
           lifecycle:
             postStart:
               exec:
-                command: ["/bin/sh", "-c", "mkdir -p /run/lock/iscsi && mv /usr/sbin/iscsiadm /usr/sbin/iscsiadm.orig 2>/dev/null; printf '#!/bin/sh\\nnsenter --mount=/host/proc/1/ns/mnt -- /usr/sbin/iscsiadm \"$@\"\\n' > /usr/sbin/iscsiadm && chmod +x /usr/sbin/iscsiadm; nsenter --mount=/host/proc/1/ns/mnt -- modprobe nvme_tcp 2>/dev/null || true; nsenter --mount=/host/proc/1/ns/mnt -- modprobe nvme_fabrics 2>/dev/null || true; test -x /usr/sbin/iscsiadm"]
+                # The shim replaces the container's bundled iscsiadm and re-execs the
+                # host's copy in the host mount namespace. The host binary is looked
+                # up on PATH, not at an absolute path: distributions disagree on where
+                # iscsiadm lives (/usr/sbin on Debian and RHEL, /usr/local/sbin on
+                # Talos), and naming a path makes execvp skip the search and fail with
+                # a bare exit 127. The modprobes are non-fatal because NVMe-oF is
+                # optional, so the hook's verdict is gated on the shim instead.
+                command: ["/bin/sh", "-c", "mkdir -p /run/lock/iscsi && mv /usr/sbin/iscsiadm /usr/sbin/iscsiadm.orig 2>/dev/null; printf '#!/bin/sh\\nexport PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin\\nexec nsenter --mount=/host/proc/1/ns/mnt -- iscsiadm \"$@\"\\n' > /usr/sbin/iscsiadm && chmod +x /usr/sbin/iscsiadm; nsenter --mount=/host/proc/1/ns/mnt -- modprobe nvme_tcp 2>/dev/null || true; nsenter --mount=/host/proc/1/ns/mnt -- modprobe nvme_fabrics 2>/dev/null || true; test -x /usr/sbin/iscsiadm"]
           securityContext:
             privileged: true
           args:
