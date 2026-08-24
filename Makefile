@@ -46,7 +46,7 @@ clean: ## Clean build artifacts
 	rm -rf bin/
 
 .PHONY: bump-version
-bump-version: ## Update all hardcoded version refs (e.g. make bump-version VERSION=1.1.3)
+bump-version: ## Update all hardcoded version refs (e.g. make bump-version VERSION=1.2.0)
 	@echo "Setting version to $(VERSION)"
 	sed -i 's/^VERSION ?= .*/VERSION ?= $(VERSION)/' Makefile operator/Makefile
 	sed -i 's#\(truenas-csi-operator:v\)[0-9][0-9.]*#\1$(VERSION)#' operator/config/manifests/bases/operator.clusterserviceversion.yaml
