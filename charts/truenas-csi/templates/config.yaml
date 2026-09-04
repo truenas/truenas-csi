@@ -1,0 +1,52 @@
+apiVersion: storage.k8s.io/v1
+kind: CSIDriver
+metadata:
+  name: {{ .Values.driverName }}
+  labels:
+    {{- include "truenas-csi.labels" . | nindent 4 }}
+spec:
+  attachRequired: true
+  podInfoOnMount: true
+  fsGroupPolicy: File
+  volumeLifecycleModes:
+    - Persistent
+    - Ephemeral
+{{- if not .Values.truenas.existingSecret }}
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ include "truenas-csi.secretName" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "truenas-csi.labels" . | nindent 4 }}
+type: Opaque
+stringData:
+  {{ include "truenas-csi.secretKey" . }}: {{ required "Set truenas.apiKey, or truenas.existingSecret to use a Secret you manage" .Values.truenas.apiKey | quote }}
+{{- end }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "truenas-csi.configMapName" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "truenas-csi.labels" . | nindent 4 }}
+data:
+  # The key set matches deploy/truenas-csi-driver.yaml. Every key is written
+  # even when empty: the driver treats an empty value as unset and derives it
+  # from truenasURL, while a missing key would keep the pods from starting for
+  # the ones referenced without optional: true.
+  truenasURL: {{ required "truenas.url is required, for example wss://10.0.0.100" .Values.truenas.url | quote }}
+  defaultPool: {{ required "truenas.defaultPool is required" .Values.truenas.defaultPool | quote }}
+  nfsServer: {{ .Values.truenas.nfsServer | quote }}
+  iscsiPortal: {{ .Values.truenas.iscsiPortal | quote }}
+  nvmeofPortal: {{ .Values.truenas.nvmeofPortal | quote }}
+  iscsiIQNBase: {{ .Values.truenas.iscsiIQNBase | quote }}
+  truenasInsecure: {{ .Values.truenas.insecureSkipTLS | quote }}
+  {{- if .Values.metrics.enabled }}
+  metricsAddr: {{ printf ":%v" .Values.metrics.port | quote }}
+  {{- end }}
+  {{- if .Values.metrics.node.enabled }}
+  nodeMetricsAddr: {{ printf ":%v" .Values.metrics.node.port | quote }}
+  {{- end }}

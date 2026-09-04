@@ -73,6 +73,21 @@ kubectl apply -f https://raw.githubusercontent.com/kubernetes-csi/external-snaps
 
 ### Deploy the Driver
 
+Either install path works; they deploy the same objects.
+
+**Helm** ([chart reference](charts/truenas-csi/README.md)):
+```bash
+helm repo add truenas-csi https://raw.githubusercontent.com/truenas/truenas-csi/master/charts
+helm install truenas-csi truenas-csi/truenas-csi \
+  --namespace truenas-csi --create-namespace \
+  --set truenas.url=wss://YOUR-TRUENAS-IP \
+  --set truenas.apiKey=YOUR-API-KEY \
+  --set truenas.defaultPool=tank \
+  --set truenas.insecureSkipTLS=true
+```
+
+**Manifest:**
+
 1. Edit `deploy/truenas-csi-driver.yaml` with your configuration
 2. Apply the manifest:
    ```bash
@@ -136,6 +151,10 @@ sudo systemctl enable microk8s-mount-propagation
 ```
 
 ## Configuration
+
+The settings below are the ConfigMap keys used by `deploy/truenas-csi-driver.yaml`.
+With Helm they are set through values instead; see the
+[chart reference](charts/truenas-csi/README.md) for the mapping.
 
 ### Driver Configuration (ConfigMap)
 

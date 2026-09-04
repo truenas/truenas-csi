@@ -19,6 +19,17 @@ GOFLAGS ?= -v
 GOFUMPT_VERSION ?= v0.11.0
 GOFUMPT ?= $(GO) run mvdan.cc/gofumpt@$(GOFUMPT_VERSION)
 
+# Helm chart. CHART_REPO_URL is where the packaged charts are served from, which
+# is what `helm repo add` resolves the tarballs against.
+HELM ?= helm
+CHART_DIR ?= charts/truenas-csi
+CHART_REPO_DIR ?= charts
+CHART_REPO_URL ?= https://raw.githubusercontent.com/truenas/truenas-csi/master/charts
+CHART_RENDER ?= bin/chart-rendered.yaml
+# Values that only satisfy the chart's required fields, so rendering does not
+# depend on a real appliance.
+CHART_TEST_VALUES ?= --set truenas.url=wss://truenas.example --set truenas.defaultPool=tank --set truenas.apiKey=example
+
 .PHONY: all
 all: build
 
@@ -55,6 +66,24 @@ fmt-check: ## Fail if any Go file is not gofumpt-formatted
 lint: ## Run linter
 	golangci-lint run ./...
 
+##@ Helm Chart
+
+.PHONY: chart-lint
+chart-lint: ## Lint the Helm chart
+	$(HELM) lint $(CHART_DIR) $(CHART_TEST_VALUES)
+
+.PHONY: verify-chart
+verify-chart: ## Fail if the Helm chart and deploy/truenas-csi-driver.yaml disagree
+	@mkdir -p $(dir $(CHART_RENDER))
+	$(HELM) template truenas-csi $(CHART_DIR) --namespace truenas-csi $(CHART_TEST_VALUES) > $(CHART_RENDER)
+	$(GO) run ./hack/chartcheck $(CHART_RENDER) deploy/truenas-csi-driver.yaml
+
+.PHONY: chart-package
+chart-package: chart-lint verify-chart ## Package the chart and refresh the repo index
+	$(HELM) package $(CHART_DIR) --destination $(CHART_REPO_DIR)
+	$(HELM) repo index $(CHART_REPO_DIR) --url $(CHART_REPO_URL)
+	@echo "Commit $(CHART_REPO_DIR)/index.yaml and the new .tgz to publish the chart."
+
 .PHONY: clean
 clean: ## Clean build artifacts
 	rm -rf bin/
@@ -66,7 +95,9 @@ bump-version: ## Update all hardcoded version refs (e.g. make bump-version VERSI
 	sed -i 's#\(truenas-csi-operator:v\)[0-9][0-9.]*#\1$(VERSION)#' operator/config/manifests/bases/operator.clusterserviceversion.yaml
 	sed -i 's#\(truenas-csi:v\)[0-9][0-9.]*#\1$(VERSION)#' operator/config/manager/manager.yaml
 	sed -i 's/^\( *newTag: *\)v[0-9][0-9.]*/\1v$(VERSION)/' operator/config/manager/kustomization.yaml
+	sed -i 's/^version: .*/version: $(VERSION)/; s/^appVersion: .*/appVersion: "$(VERSION)"/' $(CHART_DIR)/Chart.yaml
 	@echo "Done. Dockerfile 'version' labels are set from the VERSION build-arg at build time."
+	@echo "Run 'make chart-package' to publish the chart at the new version."
 	@echo "Next: make bundle VERSION=$(VERSION) USE_IMAGE_DIGESTS=true CHANNELS=stable DEFAULT_CHANNEL=stable (then finalize the CSV name/replaces)."
 
 ##@ Docker Builds (Standard)
