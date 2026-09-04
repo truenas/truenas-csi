@@ -86,7 +86,14 @@ type Config struct {
 	MaxConcurrentCalls int
 	// Logger is an optional structured logger. If not provided, logging is disabled.
 	Logger logr.Logger
+	// CallObserver is notified after every API call completes. Optional.
+	CallObserver CallObserver
 }
+
+// CallObserver reports a finished API call: the JSON-RPC method, how long the
+// call took including any reconnect and retry, and whether it failed. It keeps
+// instrumentation out of this package, which knows nothing about metrics.
+type CallObserver func(method string, duration time.Duration, err error)
 
 // ConnectionError wraps connection-related errors.
 type ConnectionError struct {
@@ -223,6 +230,9 @@ type Client struct {
 
 	// Reconnection guard
 	reconnecting atomic.Bool
+
+	// reconnects counts successful reconnections, for the driver's metrics.
+	reconnects atomic.Uint64
 
 	// apiVersionPinned ensures the API version is resolved/verified only once.
 	apiVersionPinned atomic.Bool
@@ -558,6 +568,7 @@ func (c *Client) reconnectLoop() {
 		cancel()
 
 		if err == nil {
+			c.reconnects.Add(1)
 			c.log.Info("Reconnected to TrueNAS", "attempts", attempt)
 			return
 		}
@@ -577,16 +588,35 @@ func (c *Client) Connected() bool {
 	return c.conn != nil
 }
 
+// Reconnects reports how many times the client has reconnected successfully. The
+// reconnect loop also runs when the very first dial fails, so a driver that started
+// while TrueNAS was unreachable counts that recovery too.
+func (c *Client) Reconnects() uint64 {
+	return c.reconnects.Load()
+}
+
 // Closed reports whether the client has been permanently closed.
 func (c *Client) Closed() bool {
 	return c.closed.Load()
 }
 
-// Call invokes a JSON-RPC method with automatic retry on connection loss.
+// Call invokes a JSON-RPC method and reports the outcome to the configured
+// observer. The observation covers the whole logical call, including time spent
+// waiting for a reconnect, which is what makes a slow call slow.
+func (c *Client) Call(ctx context.Context, method string, params, result any) error {
+	start := time.Now()
+	err := c.call(ctx, method, params, result)
+	if c.config.CallObserver != nil {
+		c.config.CallObserver(method, time.Since(start), err)
+	}
+	return err
+}
+
+// call invokes a JSON-RPC method with automatic retry on connection loss.
 // Concurrent calls are limited by MaxConcurrentCalls to prevent overwhelming TrueNAS.
 // If the connection drops during a call, it waits for reconnection and retries.
 // The caller's context deadline bounds the total time including retries.
-func (c *Client) Call(ctx context.Context, method string, params, result any) error {
+func (c *Client) call(ctx context.Context, method string, params, result any) error {
 	if err := c.callSem.Acquire(ctx, 1); err != nil {
 		return ErrNotConnected
 	}
