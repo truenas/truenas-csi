@@ -553,6 +553,13 @@ func (h *NVMeOFHandler) Expand(ctx context.Context, req *ExpandRequest) (*Expand
 		h.log.V(LogLevelDebug).Info("Failed to rescan NVMe-oF namespace", "device", info.DevicePath, "error", err)
 	}
 
+	// Raw block volumes have no filesystem the node may grow; the namespace
+	// rescan above is all the expansion they need.
+	if req.IsBlockVolume {
+		h.log.V(LogLevelDebug).Info("Raw block volume, skipping filesystem resize", "volumeId", req.VolumeID, "device", info.DevicePath)
+		return &ExpandResult{CapacityBytes: req.CapacityBytes}, nil
+	}
+
 	if req.VolumePath != "" {
 		if _, err := h.resizer.Resize(info.DevicePath, req.VolumePath); err != nil {
 			return nil, fmt.Errorf("failed to resize filesystem: %w", err)
