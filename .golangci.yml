@@ -1,0 +1,8 @@
+version: "2"
+# Linters are left at golangci-lint's defaults; only the formatter is pinned, so
+# `make lint` and `make fmt` agree on one style. gofumpt is a strict superset of
+# gofmt, so gofmt-clean code stays clean.
+formatters:
+  enable:
+    - gofumpt
+    - goimports

@@ -17,10 +17,10 @@ type bulkResult struct {
 }
 
 type jobStatus struct {
-	ID      int          `json:"id"`
-	State   string       `json:"state"`
-	Error   string       `json:"error"`
-	Result  []bulkResult `json:"result"`
+	ID       int          `json:"id"`
+	State    string       `json:"state"`
+	Error    string       `json:"error"`
+	Result   []bulkResult `json:"result"`
 	Progress struct {
 		Percent     int    `json:"percent"`
 		Description string `json:"description"`
