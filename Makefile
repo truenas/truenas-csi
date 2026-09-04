@@ -14,6 +14,11 @@ GO ?= go
 LDFLAGS ?= -X github.com/truenas/truenas-csi/pkg/driver.DRIVER_VERSION=$(IMG_TAG)
 GOFLAGS ?= -v
 
+# Formatting. gofumpt is a strict superset of gofmt; golangci-lint runs the same
+# formatter, so keep this version in step with .golangci.yml.
+GOFUMPT_VERSION ?= v0.11.0
+GOFUMPT ?= $(GO) run mvdan.cc/gofumpt@$(GOFUMPT_VERSION)
+
 .PHONY: all
 all: build
 
@@ -36,6 +41,15 @@ test: ## Run unit tests
 .PHONY: test-sanity
 test-sanity: ## Run CSI sanity tests
 	$(GO) test ./test/sanity/... -v
+
+.PHONY: fmt
+fmt: ## Format all Go code with gofumpt (both modules)
+	$(GOFUMPT) -l -w .
+
+.PHONY: fmt-check
+fmt-check: ## Fail if any Go file is not gofumpt-formatted
+	@out=$$($(GOFUMPT) -l .); \
+	if [ -n "$$out" ]; then echo "Not gofumpt-formatted:"; echo "$$out"; exit 1; fi
 
 .PHONY: lint
 lint: ## Run linter

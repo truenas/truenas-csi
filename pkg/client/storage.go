@@ -87,13 +87,13 @@ type Dataset struct {
 	Available       int64          `json:"available"`
 	RefQuota        int64          `json:"refquota"`
 	RefReservation  int64          `json:"refreservation"`
-	Volsize         int64          `json:"volsize"`         // For ZVOLs (iSCSI volumes)
-	Compression     any            `json:"compression"`     // Can be string or object in TrueNAS
-	Deduplication   any            `json:"deduplication"`   // Can be string or object in TrueNAS
-	Sync            any            `json:"sync"`            // Can be string or object in TrueNAS
-	RecordSize      any            `json:"recordsize"`      // Can be string or object in TrueNAS
-	ACLMode         any            `json:"aclmode"`         // Can be string or object in TrueNAS
-	ACLType         any            `json:"acltype"`         // Can be string or object in TrueNAS
+	Volsize         int64          `json:"volsize"`       // For ZVOLs (iSCSI volumes)
+	Compression     any            `json:"compression"`   // Can be string or object in TrueNAS
+	Deduplication   any            `json:"deduplication"` // Can be string or object in TrueNAS
+	Sync            any            `json:"sync"`          // Can be string or object in TrueNAS
+	RecordSize      any            `json:"recordsize"`    // Can be string or object in TrueNAS
+	ACLMode         any            `json:"aclmode"`       // Can be string or object in TrueNAS
+	ACLType         any            `json:"acltype"`       // Can be string or object in TrueNAS
 	ExtraProperties map[string]any `json:"extra_properties,omitempty"`
 }
 
@@ -402,7 +402,7 @@ type SnapshotTask struct {
 type SnapshotTaskSchedule struct {
 	Minute string `json:"minute"`
 	Hour   string `json:"hour"`
-	Dom    string `json:"dom"`   // Day of month
+	Dom    string `json:"dom"` // Day of month
 	Month  string `json:"month"`
 	Dow    string `json:"dow"`   // Day of week
 	Begin  string `json:"begin"` // Start time window

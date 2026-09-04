@@ -183,9 +183,14 @@ func TestNVMeConnectArgs_WithDHCHAP(t *testing.T) {
 		t.Fatalf("expected connect subcommand, got %v", args)
 	}
 	for _, fv := range [][2]string{
-		{"-t", "tcp"}, {"-n", "nqn.x:vol"}, {"-a", "10.0.0.136"},
-		{"-s", "4420"}, {"-l", nvmeCtrlLossTmo}, {"--hostnqn", "nqn.host"},
-		{"--dhchap-secret", "DHHC-1:01:key:"}, {"--dhchap-ctrl-secret", "DHHC-1:01:ctrl:"},
+		{"-t", "tcp"},
+		{"-n", "nqn.x:vol"},
+		{"-a", "10.0.0.136"},
+		{"-s", "4420"},
+		{"-l", nvmeCtrlLossTmo},
+		{"--hostnqn", "nqn.host"},
+		{"--dhchap-secret", "DHHC-1:01:key:"},
+		{"--dhchap-ctrl-secret", "DHHC-1:01:ctrl:"},
 	} {
 		if !hasFlag(args, fv[0], fv[1]) {
 			t.Errorf("missing %s %s in args %v", fv[0], fv[1], args)

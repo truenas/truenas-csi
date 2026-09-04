@@ -22,9 +22,9 @@ func testContext(t *testing.T) context.Context {
 // newTestClient creates a Client configured to connect to the mock server.
 func newTestClient(mock *MockTrueNASServer) *Client {
 	return New(Config{
-		URL:         mock.URL,
-		APIKey:      "test-api-key",
-		CallTimeout: testTimeout,
+		URL:          mock.URL,
+		APIKey:       "test-api-key",
+		CallTimeout:  testTimeout,
 		PingInterval: 1 * time.Hour, // Disable ping during tests
 	})
 }
