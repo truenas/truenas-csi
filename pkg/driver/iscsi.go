@@ -528,8 +528,9 @@ func (h *ISCSIHandler) Expand(ctx context.Context, req *ExpandRequest) (*ExpandR
 				h.log.V(LogLevelTrace).Info("Failed to rescan device", "device", connector.Devices[i].Name, "error", err)
 			}
 		}
-		// For multipath, resize the multipath device
-		if connector.IsMultipathEnabled() && connector.MountTargetDevice != nil {
+		// For multipath, resize the multipath device. The nil check comes first:
+		// IsMultipathEnabled dereferences MountTargetDevice.
+		if connector.MountTargetDevice != nil && connector.IsMultipathEnabled() {
 			if err := iscsilib.ResizeMultipathDevice(connector.MountTargetDevice); err != nil {
 				h.log.V(LogLevelTrace).Info("Failed to resize multipath device", "error", err)
 			}
@@ -548,6 +549,15 @@ func (h *ISCSIHandler) Expand(ctx context.Context, req *ExpandRequest) (*ExpandR
 		if err := os.WriteFile(rescanPath, []byte("1\n"), 0o200); err != nil {
 			h.log.V(LogLevelTrace).Info("Failed to rescan device", "error", err)
 		}
+	}
+
+	// Raw block volumes hold whatever the workload wrote to them, commonly a
+	// partition table. The rescans above are the whole job: probing the device
+	// for a filesystem to grow would only find contents the driver must not
+	// touch, and the resizer rejects anything it cannot grow.
+	if req.IsBlockVolume {
+		h.log.V(LogLevelDebug).Info("Raw block volume, skipping filesystem resize", "volumeId", req.VolumeID, "device", devicePath)
+		return &ExpandResult{CapacityBytes: req.CapacityBytes}, nil
 	}
 
 	// Resize filesystem

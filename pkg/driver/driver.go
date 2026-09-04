@@ -169,6 +169,7 @@ type ExpandRequest struct {
 	VolumeID      string
 	VolumePath    string
 	CapacityBytes int64
+	IsBlockVolume bool // true for raw block volumes (no filesystem to grow)
 }
 
 // StageResult contains the result of staging a volume

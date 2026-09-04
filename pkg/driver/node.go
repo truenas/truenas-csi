@@ -575,6 +575,7 @@ func (s *NodeServer) NodeExpandVolume(ctx context.Context, req *csi.NodeExpandVo
 		VolumeID:      req.VolumeId,
 		VolumePath:    req.VolumePath,
 		CapacityBytes: capacityBytes,
+		IsBlockVolume: isBlockVolumeExpansion(req.VolumeCapability, req.VolumePath),
 	}
 
 	// Expand volume
@@ -584,6 +585,27 @@ func (s *NodeServer) NodeExpandVolume(ctx context.Context, req *csi.NodeExpandVo
 	}
 
 	return &csi.NodeExpandVolumeResponse{CapacityBytes: result.CapacityBytes}, nil
+}
+
+// isBlockVolumeExpansion reports whether the volume being expanded is a raw
+// block volume, which has no filesystem for the node to grow.
+//
+// The volume capability is optional on this RPC and cannot be relied on: a CO
+// may send only an access mode, or attach a mount access type whenever the
+// PersistentVolume names a filesystem, so an absent block access type does not
+// mean the volume has a filesystem. The volume path is the authoritative
+// signal, because block volumes are published as the device itself while
+// filesystem volumes are published as a directory.
+func isBlockVolumeExpansion(capability *csi.VolumeCapability, path string) bool {
+	if capability.GetBlock() != nil {
+		return true
+	}
+
+	info, err := os.Stat(path)
+	if err != nil {
+		return false
+	}
+	return !info.IsDir()
 }
 
 type fsStats struct {
