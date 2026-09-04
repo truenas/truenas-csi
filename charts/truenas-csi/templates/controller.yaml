@@ -1,0 +1,177 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "truenas-csi.fullname" . }}-controller
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "truenas-csi.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.controller.replicas }}
+  selector:
+    matchLabels:
+      {{- include "truenas-csi.controllerSelectorLabel" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "truenas-csi.controllerSelectorLabel" . | nindent 8 }}
+        {{- include "truenas-csi.labels" . | nindent 8 }}
+        {{- with .Values.controller.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      {{- with .Values.controller.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      serviceAccountName: {{ include "truenas-csi.controllerServiceAccountName" . }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.controller.priorityClassName }}
+      priorityClassName: {{ . }}
+      {{- end }}
+      {{- with .Values.controller.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.controller.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.controller.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: csi-controller
+          image: {{ include "truenas-csi.driverImage" . }}
+          imagePullPolicy: {{ .Values.image.driver.pullPolicy }}
+          args:
+            - "--endpoint=$(CSI_ENDPOINT)"
+            - "--node-id=$(NODE_ID)"
+            - "--mode=controller"
+            - "--v={{ .Values.logLevel }}"
+          env:
+            {{- include "truenas-csi.driverEnv" (dict "ctx" . "metricsKey" "metricsAddr") | nindent 12 }}
+          {{- if .Values.metrics.enabled }}
+          ports:
+            - name: metrics
+              containerPort: {{ .Values.metrics.port }}
+              protocol: TCP
+          {{- end }}
+          volumeMounts:
+            - name: socket-dir
+              mountPath: /csi
+          resources:
+            {{- toYaml .Values.controller.resources | nindent 12 }}
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: {{ .Values.healthPort }}
+            initialDelaySeconds: 10
+            timeoutSeconds: 3
+            periodSeconds: 10
+            failureThreshold: 5
+
+        - name: csi-provisioner
+          image: {{ .Values.image.csiProvisioner.repository }}:{{ .Values.image.csiProvisioner.tag }}
+          {{- with .Values.image.csiProvisioner.pullPolicy }}
+          imagePullPolicy: {{ . }}
+          {{- end }}
+          args:
+            - "--csi-address=$(ADDRESS)"
+            - "--v=5"
+            # No Topology feature gate: the driver reports no accessible topology,
+            # so there is nothing for the provisioner to constrain PVs by.
+            - "--extra-create-metadata"
+            - "--leader-election=true"
+            - "--default-fstype={{ .Values.controller.defaultFSType }}"
+            - "--timeout={{ .Values.controller.timeout }}"
+            {{- if .Values.metrics.sidecars.enabled }}
+            # Sidecar metrics (csi_sidecar_operations_seconds). Each sidecar in
+            # this pod needs its own port; see docs/metrics.md for the map.
+            - "--http-endpoint=:{{ .Values.metrics.sidecars.provisionerPort }}"
+            {{- end }}
+          env:
+            - name: ADDRESS
+              value: /csi/csi.sock
+          volumeMounts:
+            - name: socket-dir
+              mountPath: /csi
+
+        - name: csi-attacher
+          image: {{ .Values.image.csiAttacher.repository }}:{{ .Values.image.csiAttacher.tag }}
+          {{- with .Values.image.csiAttacher.pullPolicy }}
+          imagePullPolicy: {{ . }}
+          {{- end }}
+          args:
+            - "--csi-address=$(ADDRESS)"
+            - "--v=5"
+            - "--leader-election=true"
+            - "--timeout={{ .Values.controller.timeout }}"
+            {{- if .Values.metrics.sidecars.enabled }}
+            - "--http-endpoint=:{{ .Values.metrics.sidecars.attacherPort }}"
+            {{- end }}
+          env:
+            - name: ADDRESS
+              value: /csi/csi.sock
+          volumeMounts:
+            - name: socket-dir
+              mountPath: /csi
+
+        - name: csi-snapshotter
+          image: {{ .Values.image.csiSnapshotter.repository }}:{{ .Values.image.csiSnapshotter.tag }}
+          {{- with .Values.image.csiSnapshotter.pullPolicy }}
+          imagePullPolicy: {{ . }}
+          {{- end }}
+          args:
+            - "--csi-address=$(ADDRESS)"
+            - "--v=5"
+            - "--leader-election=true"
+            - "--timeout={{ .Values.controller.timeout }}"
+            {{- if .Values.metrics.sidecars.enabled }}
+            - "--http-endpoint=:{{ .Values.metrics.sidecars.snapshotterPort }}"
+            {{- end }}
+          env:
+            - name: ADDRESS
+              value: /csi/csi.sock
+          volumeMounts:
+            - name: socket-dir
+              mountPath: /csi
+
+        - name: csi-resizer
+          image: {{ .Values.image.csiResizer.repository }}:{{ .Values.image.csiResizer.tag }}
+          {{- with .Values.image.csiResizer.pullPolicy }}
+          imagePullPolicy: {{ . }}
+          {{- end }}
+          args:
+            - "--csi-address=$(ADDRESS)"
+            - "--v=5"
+            - "--leader-election=true"
+            - "--timeout={{ .Values.controller.timeout }}"
+            {{- if .Values.metrics.sidecars.enabled }}
+            - "--http-endpoint=:{{ .Values.metrics.sidecars.resizerPort }}"
+            {{- end }}
+          env:
+            - name: ADDRESS
+              value: /csi/csi.sock
+          volumeMounts:
+            - name: socket-dir
+              mountPath: /csi
+
+        - name: liveness-probe
+          image: {{ .Values.image.livenessProbe.repository }}:{{ .Values.image.livenessProbe.tag }}
+          {{- with .Values.image.livenessProbe.pullPolicy }}
+          imagePullPolicy: {{ . }}
+          {{- end }}
+          args:
+            - "--csi-address=/csi/csi.sock"
+            - "--health-port={{ .Values.healthPort }}"
+          volumeMounts:
+            - name: socket-dir
+              mountPath: /csi
+
+      volumes:
+        - name: socket-dir
+          emptyDir: {}

@@ -1,0 +1,48 @@
+{{- range .Values.storageClasses }}
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: {{ .name }}
+  labels:
+    {{- include "truenas-csi.labels" $ | nindent 4 }}
+  annotations:
+    storageclass.kubernetes.io/is-default-class: {{ .isDefault | default false | quote }}
+    {{- with .annotations }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+provisioner: {{ $.Values.driverName }}
+reclaimPolicy: {{ .reclaimPolicy | default "Delete" }}
+volumeBindingMode: {{ .volumeBindingMode | default "Immediate" }}
+allowVolumeExpansion: {{ if kindIs "invalid" .allowVolumeExpansion }}true{{ else }}{{ .allowVolumeExpansion }}{{ end }}
+{{- with .mountOptions }}
+mountOptions:
+  {{- toYaml . | nindent 2 }}
+{{- end }}
+{{- with .parameters }}
+parameters:
+  {{- range $key, $value := . }}
+  {{ $key }}: {{ $value | quote }}
+  {{- end }}
+{{- end }}
+---
+{{- end }}
+{{- if .Values.volumeSnapshotClass.enabled }}
+apiVersion: snapshot.storage.k8s.io/v1
+kind: VolumeSnapshotClass
+metadata:
+  name: {{ .Values.volumeSnapshotClass.name }}
+  labels:
+    {{- include "truenas-csi.labels" . | nindent 4 }}
+  {{- with .Values.volumeSnapshotClass.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+driver: {{ .Values.driverName }}
+deletionPolicy: {{ .Values.volumeSnapshotClass.deletionPolicy }}
+{{- with .Values.volumeSnapshotClass.parameters }}
+parameters:
+  {{- range $key, $value := . }}
+  {{ $key }}: {{ $value | quote }}
+  {{- end }}
+{{- end }}
+{{- end }}

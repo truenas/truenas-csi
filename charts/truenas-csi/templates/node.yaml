@@ -1,0 +1,177 @@
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: {{ include "truenas-csi.fullname" . }}-node
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "truenas-csi.labels" . | nindent 4 }}
+spec:
+  selector:
+    matchLabels:
+      {{- include "truenas-csi.nodeSelectorLabel" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "truenas-csi.nodeSelectorLabel" . | nindent 8 }}
+        {{- include "truenas-csi.labels" . | nindent 8 }}
+        {{- with .Values.node.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      {{- with .Values.node.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      serviceAccountName: {{ include "truenas-csi.nodeServiceAccountName" . }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      hostNetwork: true
+      hostPID: true
+      hostIPC: true
+      {{- with .Values.node.priorityClassName }}
+      priorityClassName: {{ . }}
+      {{- end }}
+      {{- with .Values.node.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.node.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: csi-node
+          image: {{ include "truenas-csi.driverImage" . }}
+          imagePullPolicy: {{ .Values.image.driver.pullPolicy }}
+          lifecycle:
+            postStart:
+              exec:
+                # The shim replaces the container's bundled iscsiadm and re-execs the
+                # host's copy in the host mount namespace. The host binary is looked
+                # up on PATH, not at an absolute path: distributions disagree on where
+                # iscsiadm lives (/usr/sbin on Debian and RHEL, /usr/local/sbin on
+                # Talos), and naming a path makes execvp skip the search and fail with
+                # a bare exit 127. The modprobes are non-fatal because NVMe-oF is
+                # optional, so the hook's verdict is gated on the shim instead.
+                command: ["/bin/sh", "-c", "mkdir -p /run/lock/iscsi && mv /usr/sbin/iscsiadm /usr/sbin/iscsiadm.orig 2>/dev/null; printf '#!/bin/sh\\nexport PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin\\nexec nsenter --mount=/host/proc/1/ns/mnt -- iscsiadm \"$@\"\\n' > /usr/sbin/iscsiadm && chmod +x /usr/sbin/iscsiadm; nsenter --mount=/host/proc/1/ns/mnt -- modprobe nvme_tcp 2>/dev/null || true; nsenter --mount=/host/proc/1/ns/mnt -- modprobe nvme_fabrics 2>/dev/null || true; test -x /usr/sbin/iscsiadm"]
+          securityContext:
+            privileged: true
+          args:
+            - "--endpoint=$(CSI_ENDPOINT)"
+            - "--node-id=$(NODE_ID)"
+            - "--mode=node"
+            - "--v={{ .Values.logLevel }}"
+          env:
+            {{- include "truenas-csi.driverEnv" (dict "ctx" . "metricsKey" "nodeMetricsAddr") | nindent 12 }}
+          {{- if .Values.metrics.node.enabled }}
+          ports:
+            - name: metrics
+              containerPort: {{ .Values.metrics.node.port }}
+              protocol: TCP
+          {{- end }}
+          volumeMounts:
+            - name: plugin-dir
+              mountPath: /csi
+            - name: kubelet-dir
+              mountPath: {{ .Values.kubeletDir }}
+              mountPropagation: Bidirectional
+            - name: device-dir
+              mountPath: /dev
+            - name: modules-dir
+              mountPath: /lib/modules
+              readOnly: true
+            - name: iscsi-dir
+              mountPath: /etc/iscsi
+              mountPropagation: Bidirectional
+            - name: iscsi-lib
+              mountPath: /var/lib/iscsi
+              mountPropagation: Bidirectional
+            - name: connector-dir
+              mountPath: /var/lib/truenas-csi
+            - name: host-root
+              mountPath: /host
+              mountPropagation: Bidirectional
+          resources:
+            {{- toYaml .Values.node.resources | nindent 12 }}
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: {{ .Values.healthPort }}
+            initialDelaySeconds: 10
+            timeoutSeconds: 3
+            periodSeconds: 10
+            failureThreshold: 5
+
+        - name: csi-node-driver-registrar
+          image: {{ .Values.image.nodeDriverRegistrar.repository }}:{{ .Values.image.nodeDriverRegistrar.tag }}
+          {{- with .Values.image.nodeDriverRegistrar.pullPolicy }}
+          imagePullPolicy: {{ . }}
+          {{- end }}
+          args:
+            - "--csi-address=$(ADDRESS)"
+            - "--kubelet-registration-path=$(DRIVER_REG_SOCK_PATH)"
+            - "--v=5"
+          env:
+            - name: ADDRESS
+              value: /csi/csi.sock
+            - name: DRIVER_REG_SOCK_PATH
+              value: {{ printf "%s/plugins/%s/csi.sock" .Values.kubeletDir .Values.driverName }}
+          volumeMounts:
+            - name: plugin-dir
+              mountPath: /csi
+            - name: registration-dir
+              mountPath: /registration
+
+        - name: liveness-probe
+          image: {{ .Values.image.livenessProbe.repository }}:{{ .Values.image.livenessProbe.tag }}
+          {{- with .Values.image.livenessProbe.pullPolicy }}
+          imagePullPolicy: {{ . }}
+          {{- end }}
+          args:
+            - "--csi-address=/csi/csi.sock"
+            - "--health-port={{ .Values.healthPort }}"
+          volumeMounts:
+            - name: plugin-dir
+              mountPath: /csi
+
+      volumes:
+        - name: registration-dir
+          hostPath:
+            path: {{ printf "%s/plugins_registry/" .Values.kubeletDir }}
+            type: DirectoryOrCreate
+        - name: plugin-dir
+          hostPath:
+            path: {{ printf "%s/plugins/%s/" .Values.kubeletDir .Values.driverName }}
+            type: DirectoryOrCreate
+        - name: kubelet-dir
+          hostPath:
+            path: {{ .Values.kubeletDir }}
+            type: Directory
+        - name: device-dir
+          hostPath:
+            path: /dev
+        - name: modules-dir
+          hostPath:
+            path: /lib/modules
+            type: Directory
+        - name: iscsi-dir
+          hostPath:
+            path: /etc/iscsi
+            type: Directory
+        - name: iscsi-lib
+          hostPath:
+            path: /var/lib/iscsi
+            type: DirectoryOrCreate
+        # Per-volume connector files record the protocol and target of each staged
+        # volume. NodeUnstageVolume gets no publish context, so this state has to
+        # outlive the container.
+        - name: connector-dir
+          hostPath:
+            path: /var/lib/truenas-csi
+            type: DirectoryOrCreate
+        - name: host-root
+          hostPath:
+            path: /
+            type: Directory

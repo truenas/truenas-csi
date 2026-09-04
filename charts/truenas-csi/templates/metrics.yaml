@@ -1,0 +1,83 @@
+{{- if .Values.metrics.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "truenas-csi.fullname" . }}-controller-metrics
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "truenas-csi.controllerSelectorLabel" . | nindent 4 }}
+    {{- include "truenas-csi.labels" . | nindent 4 }}
+  {{- with .Values.metrics.service.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "truenas-csi.controllerSelectorLabel" . | nindent 4 }}
+  ports:
+    - name: metrics
+      port: {{ .Values.metrics.port }}
+      targetPort: {{ .Values.metrics.port }}
+      protocol: TCP
+    {{- if .Values.metrics.sidecars.enabled }}
+    - name: provisioner
+      port: {{ .Values.metrics.sidecars.provisionerPort }}
+      targetPort: {{ .Values.metrics.sidecars.provisionerPort }}
+      protocol: TCP
+    - name: attacher
+      port: {{ .Values.metrics.sidecars.attacherPort }}
+      targetPort: {{ .Values.metrics.sidecars.attacherPort }}
+      protocol: TCP
+    - name: snapshotter
+      port: {{ .Values.metrics.sidecars.snapshotterPort }}
+      targetPort: {{ .Values.metrics.sidecars.snapshotterPort }}
+      protocol: TCP
+    - name: resizer
+      port: {{ .Values.metrics.sidecars.resizerPort }}
+      targetPort: {{ .Values.metrics.sidecars.resizerPort }}
+      protocol: TCP
+    {{- end }}
+{{- end }}
+{{- if .Values.metrics.serviceMonitor.enabled }}
+{{- if not .Values.metrics.enabled }}
+{{- fail "metrics.serviceMonitor.enabled requires metrics.enabled: there would be no Service to scrape" }}
+{{- end }}
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ include "truenas-csi.fullname" . }}-controller
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "truenas-csi.labels" . | nindent 4 }}
+    {{- with .Values.metrics.serviceMonitor.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  namespaceSelector:
+    matchNames:
+      - {{ .Release.Namespace }}
+  selector:
+    matchLabels:
+      {{- include "truenas-csi.controllerSelectorLabel" . | nindent 6 }}
+  endpoints:
+    - port: metrics
+      path: /metrics
+      interval: {{ .Values.metrics.serviceMonitor.interval }}
+      scheme: http
+      {{- with .Values.metrics.serviceMonitor.scrapeTimeout }}
+      scrapeTimeout: {{ . }}
+      {{- end }}
+    {{- if .Values.metrics.sidecars.enabled }}
+    {{- range list "provisioner" "attacher" "snapshotter" "resizer" }}
+    - port: {{ . }}
+      path: /metrics
+      interval: {{ $.Values.metrics.serviceMonitor.interval }}
+      scheme: http
+      {{- with $.Values.metrics.serviceMonitor.scrapeTimeout }}
+      scrapeTimeout: {{ . }}
+      {{- end }}
+    {{- end }}
+    {{- end }}
+{{- end }}

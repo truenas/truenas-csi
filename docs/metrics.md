@@ -22,6 +22,11 @@ port.
 
 ## Enabling the driver endpoint
 
+With Helm, set `metrics.enabled=true`, plus `metrics.serviceMonitor.enabled=true`
+if you run the Prometheus Operator. The chart creates the Service and the
+ServiceMonitor for you, so the rest of this section applies to the flat
+manifest.
+
 Add `metricsAddr` to the `truenas-csi-config` ConfigMap and restart the
 controller:
 

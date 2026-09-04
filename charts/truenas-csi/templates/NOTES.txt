@@ -1,0 +1,33 @@
+{{ .Chart.Name }} {{ .Chart.Version }} installed, driver {{ .Chart.AppVersion }}.
+
+Provisioner name: {{ .Values.driverName }}
+Namespace:        {{ .Release.Namespace }}
+Kubelet dir:      {{ .Values.kubeletDir }}
+
+Check the workloads are up:
+
+  kubectl -n {{ .Release.Namespace }} get pods -l app={{ include "truenas-csi.fullname" . }}-controller
+  kubectl -n {{ .Release.Namespace }} get pods -l app={{ include "truenas-csi.fullname" . }}-node
+  kubectl get csidrivers {{ .Values.driverName }}
+
+{{ if not .Values.storageClasses -}}
+No StorageClass was created. Add one under `storageClasses` in values, or apply
+an example from https://github.com/truenas/truenas-csi/tree/master/examples
+{{- else -}}
+StorageClasses created:
+{{- range .Values.storageClasses }}
+  - {{ .name }} ({{ (.parameters).protocol | default "nfs" }}){{ if .isDefault }} [default]{{ end }}
+{{- end }}
+{{- end }}
+
+{{ if and (not .Values.truenas.insecureSkipTLS) (hasPrefix "wss://" .Values.truenas.url) -}}
+TLS verification is on. If the appliance still uses its self-signed certificate,
+the pods will stay un-Ready with no obvious error; set truenas.insecureSkipTLS=true
+or install a trusted certificate on TrueNAS.
+{{ end -}}
+
+{{- if .Values.metrics.node.enabled }}
+The node plugin serves metrics on port {{ .Values.metrics.node.port }} with hostNetwork,
+so that port is bound on every node. A conflict is logged and metrics are skipped;
+volumes keep working.
+{{- end }}
