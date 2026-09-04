@@ -18,6 +18,9 @@ var (
 	endpoint = flag.String("endpoint", "unix:///csi/csi.sock", "CSI endpoint")
 	nodeID   = flag.String("node-id", "", "Node ID")
 	mode     = flag.String("mode", "all", "Driver mode: controller, node, or all")
+
+	// Observability
+	metricsAddr = flag.String("metrics-addr", "", "Listen address for the Prometheus metrics endpoint (e.g. :8080). Empty disables it, and TRUENAS_METRICS_ADDR is read instead")
 )
 
 func main() {
@@ -35,10 +38,11 @@ func main() {
 	}
 
 	config := &driver.DriverConfig{
-		NodeID:   *nodeID,
-		Endpoint: *endpoint,
-		Mode:     driver.DriverMode(*mode),
-		Logger:   logger,
+		NodeID:      *nodeID,
+		Endpoint:    *endpoint,
+		Mode:        driver.DriverMode(*mode),
+		MetricsAddr: *metricsAddr,
+		Logger:      logger,
 	}
 
 	if err := loadEnvConfig(config); err != nil {
@@ -146,6 +150,14 @@ func loadEnvConfig(config *driver.DriverConfig) error {
 		if insecure, err := strconv.ParseBool(val); err == nil {
 			config.TrueNASInsecure = insecure
 		}
+	}
+
+	// Optional: serve Prometheus metrics on this address (e.g. ":8080"), disabled
+	// when empty. The deployment manifests configure it here rather than with the
+	// equivalent flag, because an older driver image ignores an unknown environment
+	// variable but exits on an unknown flag.
+	if config.MetricsAddr == "" {
+		config.MetricsAddr = os.Getenv("TRUENAS_METRICS_ADDR")
 	}
 
 	return nil

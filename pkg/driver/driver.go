@@ -235,6 +235,11 @@ type Driver struct {
 
 	server *grpc.Server
 
+	// metrics is always collected; metricsAddr decides whether it is also served
+	// over HTTP. Empty means no listener is opened.
+	metrics     *Metrics
+	metricsAddr string
+
 	controllerCaps []*csi.ControllerServiceCapability
 	nodeCaps       []*csi.NodeServiceCapability
 	pluginCaps     []*csi.PluginCapability
@@ -278,6 +283,10 @@ type DriverConfig struct {
 	ISCSIPortal  string
 	ISCSIIQNBase string
 	NVMeOFPortal string
+
+	// MetricsAddr is the listen address for the Prometheus endpoint (for example
+	// ":8080"). Empty leaves the endpoint disabled.
+	MetricsAddr string
 
 	// Logger is the structured logger for the driver and client.
 	// If not set, logging for the client will be disabled.
@@ -359,11 +368,15 @@ func NewDriver(config *DriverConfig) (*Driver, error) {
 
 	ctx := context.Background()
 
+	// Built before the client so API calls are observed from the first one.
+	metrics := NewMetrics()
+
 	cfg := client.Config{
 		URL:                config.TrueNASURL,
 		APIKey:             config.TrueNASAPIKey,
 		InsecureSkipVerify: config.TrueNASInsecure,
 		Logger:             config.Logger,
+		CallObserver:       metrics.RecordAPICall,
 	}
 
 	truenasClient := client.New(cfg)
@@ -468,6 +481,12 @@ func NewDriver(config *DriverConfig) (*Driver, error) {
 		nvmeofPortal:  config.NVMeOFPortal,
 		nvmeofPortID:  nvmeofPortID,
 		nvmeBaseNQN:   nvmeBaseNQN,
+		metrics:       metrics,
+		metricsAddr:   config.MetricsAddr,
+	}
+
+	if err := d.metrics.RegisterConnectionState(truenasClient.Connected, truenasClient.Reconnects); err != nil {
+		log.Error(err, "TrueNAS connection metrics are unavailable")
 	}
 
 	d.initializeCapabilities()
@@ -550,6 +569,16 @@ func (d *Driver) Run(ctx context.Context) error {
 	csi.RegisterControllerServer(d.server, d.controllerServer)
 	csi.RegisterNodeServer(d.server, d.nodeServer)
 
+	// Metrics are optional and must never keep the driver from serving volumes, so
+	// a listener that cannot be opened is reported and left behind.
+	if d.metricsAddr != "" {
+		if metricsAddr, err := d.metrics.StartServer(ctx, d.metricsAddr, d.log); err != nil {
+			d.log.Error(err, "Metrics endpoint could not start, serving volumes without it", "address", d.metricsAddr)
+		} else {
+			d.log.Info("Serving Prometheus metrics", "address", metricsAddr.String(), "path", MetricsPath)
+		}
+	}
+
 	serverErr := make(chan error, 1)
 
 	go func() {
@@ -621,6 +650,8 @@ func (d *Driver) unaryInterceptor(ctx context.Context, req any, info *grpc.Unary
 	resp, err := handler(ctx, req)
 
 	duration := time.Since(startTime)
+	d.metrics.RecordGRPCCall(info.FullMethod, err, duration)
+
 	if err != nil {
 		d.log.Error(err, "GRPC call failed", "method", info.FullMethod, "requestId", requestID, "duration", duration)
 	} else {

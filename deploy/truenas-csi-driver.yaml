@@ -164,6 +164,12 @@ data:
   iscsiPortal: "YOUR-TRUENAS-IP:3260"
   nvmeofPortal: "YOUR-TRUENAS-IP:4420"  # Optional: NVMe-oF portal; auto-derived from truenasURL host if omitted
   iscsiIQNBase: "iqn.2000-01.io.truenas"  # Optional: Custom IQN prefix (default: iqn.2000-01.io.truenas)
+  # Optional: Prometheus metrics. Uncomment to serve /metrics on this address in
+  # the controller, then apply deploy/monitoring/. Disabled while absent.
+  # metricsAddr: ":8080"
+  # Optional: the same for the node plugin, which runs with hostNetwork, so the
+  # address it binds is a port on every node. See docs/metrics.md.
+  # nodeMetricsAddr: ":8080"
 
 ---
 # Controller Deployment
@@ -240,6 +246,13 @@ spec:
                   name: truenas-csi-config
                   key: truenasInsecure
                   optional: true
+            # Prometheus metrics listen address, disabled when the key is absent
+            - name: TRUENAS_METRICS_ADDR
+              valueFrom:
+                configMapKeyRef:
+                  name: truenas-csi-config
+                  key: metricsAddr
+                  optional: true
             - name: NODE_ID
               valueFrom:
                 fieldRef:
@@ -275,6 +288,9 @@ spec:
             - "--leader-election=true"
             - "--default-fstype=ext4"
             - "--timeout=60s"
+            # Sidecar metrics (csi_sidecar_operations_seconds). Each sidecar in
+            # this pod needs its own port; see docs/metrics.md for the map.
+            - "--http-endpoint=:8081"
           env:
             - name: ADDRESS
               value: /csi/csi.sock
@@ -290,6 +306,7 @@ spec:
             - "--v=5"
             - "--leader-election=true"
             - "--timeout=60s"
+            - "--http-endpoint=:8082"
           env:
             - name: ADDRESS
               value: /csi/csi.sock
@@ -305,6 +322,7 @@ spec:
             - "--v=5"
             - "--leader-election=true"
             - "--timeout=60s"
+            - "--http-endpoint=:8083"
           env:
             - name: ADDRESS
               value: /csi/csi.sock
@@ -320,6 +338,7 @@ spec:
             - "--v=5"
             - "--leader-election=true"
             - "--timeout=60s"
+            - "--http-endpoint=:8084"
           env:
             - name: ADDRESS
               value: /csi/csi.sock
@@ -433,6 +452,15 @@ spec:
                 configMapKeyRef:
                   name: truenas-csi-config
                   key: truenasInsecure
+                  optional: true
+            # Prometheus metrics listen address. This pod runs with hostNetwork,
+            # so its key is deliberately separate from the controller's: setting
+            # it opens the port on every node.
+            - name: TRUENAS_METRICS_ADDR
+              valueFrom:
+                configMapKeyRef:
+                  name: truenas-csi-config
+                  key: nodeMetricsAddr
                   optional: true
             - name: NODE_ID
               valueFrom:

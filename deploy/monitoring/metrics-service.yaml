@@ -1,0 +1,45 @@
+# Metrics Service for the TrueNAS CSI controller pod.
+#
+# The sidecar ports (8081-8084) serve as soon as the driver manifest is applied,
+# since their --http-endpoint flags ship with the sidecar image versions the
+# manifest pins.
+#
+# Port 8080 is the driver's own endpoint, which serves only when the
+# truenas-csi-config ConfigMap sets metricsAddr. Applying this Service before
+# that is harmless: the port simply has no listener behind it.
+#
+# The node plugin has no Service here on purpose. It runs with hostNetwork, so
+# its metrics are reachable on the node address itself and are better scraped
+# with a Prometheus node-role job than through a ClusterIP.
+apiVersion: v1
+kind: Service
+metadata:
+  name: truenas-csi-controller-metrics
+  namespace: truenas-csi
+  labels:
+    app: truenas-csi-controller
+spec:
+  type: ClusterIP
+  selector:
+    app: truenas-csi-controller
+  ports:
+    - name: metrics
+      port: 8080
+      targetPort: 8080
+      protocol: TCP
+    - name: provisioner
+      port: 8081
+      targetPort: 8081
+      protocol: TCP
+    - name: attacher
+      port: 8082
+      targetPort: 8082
+      protocol: TCP
+    - name: snapshotter
+      port: 8083
+      targetPort: 8083
+      protocol: TCP
+    - name: resizer
+      port: 8084
+      targetPort: 8084
+      protocol: TCP

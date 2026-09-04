@@ -1,0 +1,52 @@
+# Example ServiceMonitor for Prometheus Operator installations
+# (kube-prometheus-stack, OpenShift user workload monitoring).
+#
+# This is kept out of deploy/truenas-csi-driver.yaml deliberately: the
+# ServiceMonitor kind only exists once the Prometheus Operator CRDs are
+# installed, and inlining it would make applying the driver manifest fail on
+# clusters that do not have them.
+#
+# Requires deploy/monitoring/metrics-service.yaml and metricsAddr set in the
+# truenas-csi-config ConfigMap.
+#
+# The release label below is what a default kube-prometheus-stack install uses
+# to decide which ServiceMonitors it owns. Match it to your own release name, or
+# check the Prometheus resource's serviceMonitorSelector.
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: truenas-csi-controller
+  namespace: truenas-csi
+  labels:
+    release: kube-prometheus-stack
+spec:
+  namespaceSelector:
+    matchNames:
+      - truenas-csi
+  selector:
+    matchLabels:
+      app: truenas-csi-controller
+  endpoints:
+    # The driver's own metrics. Scraping this while metricsAddr is unset shows
+    # the target as down, which is the correct signal for a missing listener.
+    - port: metrics
+      path: /metrics
+      interval: 30s
+      scheme: http
+    # CSI sidecar metrics (csi_sidecar_operations_seconds), one port each.
+    - port: provisioner
+      path: /metrics
+      interval: 30s
+      scheme: http
+    - port: attacher
+      path: /metrics
+      interval: 30s
+      scheme: http
+    - port: snapshotter
+      path: /metrics
+      interval: 30s
+      scheme: http
+    - port: resizer
+      path: /metrics
+      interval: 30s
+      scheme: http

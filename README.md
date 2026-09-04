@@ -15,6 +15,7 @@ A Container Storage Interface (CSI) driver for [TrueNAS 25.10.0+](https://www.tr
 - **ZFS encryption** - Dataset-level encryption with key management
 - **Automatic snapshot scheduling** - Periodic snapshots via StorageClass
 - **TrueNAS Websocket API** - Uses the modern TrueNAS Websocket API
+- **Prometheus metrics** - Optional `/metrics` endpoint for CSI operations and TrueNAS API health ([docs](docs/metrics.md))
 
 ## Requirements
 
@@ -147,6 +148,8 @@ sudo systemctl enable microk8s-mount-propagation
 | `iscsiPortal` | iSCSI portal address | `10.0.0.100:3260` |
 | `nvmeofPortal` | NVMe-oF portal address (optional; auto-derived) | `10.0.0.100:4420` |
 | `iscsiIQNBase` | Base IQN for iSCSI targets | `iqn.2024-01.com.example` |
+| `metricsAddr` | Prometheus metrics address for the controller (optional; disabled when absent) | `:8080` |
+| `nodeMetricsAddr` | Prometheus metrics address for the node plugin, which uses hostNetwork (optional) | `:8080` |
 
 ### StorageClass Parameters
 
