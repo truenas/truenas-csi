@@ -573,6 +573,8 @@ func (r *TrueNASCSIReconciler) reconcileSCC(ctx context.Context, csi *csiv1alpha
 		scc.SetGroupVersionKind(sccGVK)
 		scc.SetName(def.name)
 
+		controllerutil.SetControllerReference(csi, scc, r.Scheme)
+
 		_, err := controllerutil.CreateOrUpdate(ctx, r.Client, scc, func() error {
 			scc.SetLabels(ComponentLabels(def.component))
 			for k, v := range def.fields {
@@ -964,6 +966,7 @@ func (r *TrueNASCSIReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Owns(&corev1.ServiceAccount{}).
 		Owns(&networkingv1.NetworkPolicy{}).
 		Owns(&storagev1.CSIDriver{}).
+		Owns(&unstructured.Unstructured{Object: map[string]any{"apiVersion": "security.openshift.io/v1", "kind": "SecurityContextConstraints"}}).
 		Named("truenascsi").
 		Complete(r)
 }
