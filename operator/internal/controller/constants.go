@@ -14,6 +14,16 @@ const (
 	FinalizerName = "csi.truenas.io/finalizer"
 )
 
+// Root Certificate Bundle Volume constants
+const (
+	SharedRootCAVolumeName = "root-ca-bundle"
+	// This is the default path where the Root CA Bundle is mounted in the controller
+	UBIRootCertMountPath        = "/etc/pki/tls/certs/"
+	DistrolessRootCertMountPath = "/etc/ssl/certs/"
+	UBIRootCertFilename				= "ca-bundle.crt"
+	DistrolessRootCertFilename		= "ca-certificates.crt"
+)
+
 // LeaderElectionID is the name of the Lease resource used for leader election
 const LeaderElectionID = "truenas-csi-operator.truenas.io"
 

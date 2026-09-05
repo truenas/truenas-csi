@@ -54,6 +54,9 @@ spec:
             - "--v={{ .Values.logLevel }}"
           env:
             {{- include "truenas-csi.driverEnv" (dict "ctx" . "metricsKey" "metricsAddr") | nindent 12 }}
+            {{- with .Values.controller.extraEnvVars }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
           {{- if .Values.metrics.enabled }}
           ports:
             - name: metrics
@@ -63,6 +66,9 @@ spec:
           volumeMounts:
             - name: socket-dir
               mountPath: /csi
+            {{- with .Values.controller.extraVolumeMounts }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
           resources:
             {{- toYaml .Values.controller.resources | nindent 12 }}
           livenessProbe:
@@ -175,3 +181,6 @@ spec:
       volumes:
         - name: socket-dir
           emptyDir: {}
+        {{- with .Values.controller.extraVolumes }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}

@@ -26,6 +26,12 @@ type TrueNASCSISpec struct {
 	// +operator-sdk:csv:customresourcedefinitions:type=spec,displayName="Default Pool",xDescriptors="urn:alm:descriptor:com.tectonic.ui:text"
 	DefaultPool string `json:"defaultPool"`
 
+	// RootCertificateBundle is the reference to the ConfigMap containing the root CA bundle for TrueNAS API TLS verification
+	// If the key is not defined, the ConfigMap must have a key named "ca-bundle.crt"
+	// +optional
+	// +operator-sdk:csv:customresourcedefinitions:type=spec,displayName="Root Certificate Bundle",xDescriptors="urn:alm:descriptor:io.kubernetes:ConfigMap"
+	RootCertificateBundle ConfigMapReference `json:"rootCertificateBundle,omitempty"`
+
 	// Protocol Settings
 
 	// NFSServer is the IP address or hostname of the TrueNAS NFS server
@@ -173,6 +179,14 @@ const (
 	ManagementStateUnmanaged = "Unmanaged"
 	ManagementStateRemoved   = "Removed"
 )
+
+// ConfigMapReference is a reference to a ConfigMap in the same namespace as the deployed CSI
+type ConfigMapReference struct {
+	// Name of the ConfigMap
+	Name string `json:"name"`
+	// Key in the ConfigMap to reference
+	Key string `json:"key,omitempty"`
+}
 
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status

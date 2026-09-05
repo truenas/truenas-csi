@@ -1,14 +1,52 @@
 package controller
 
 import (
+	"context"
+
+	csiv1alpha1 "github.com/truenas/truenas-csi/operator/api/v1alpha1"
 	corev1 "k8s.io/api/core/v1"
 )
 
 // buildControllerVolumes returns the volumes for the controller deployment
-func buildControllerVolumes() []corev1.Volume {
-	return []corev1.Volume{
+func buildControllerVolumes(csi *csiv1alpha1.TrueNASCSI) []corev1.Volume {
+	volumes := []corev1.Volume{
 		emptyDirVolume(VolumeSocketDir),
 	}
+	// If a RootCertificateBundle is specified, add a volume for it
+	if csi.Spec.RootCertificateBundle.Name != "" {
+		// Default key is "ca-bundle.crt" if not specified
+		key := "ca-bundle.crt"
+		path := "ca-bundle.crt"
+
+		// Detect if running on OpenShift to determine the correct mount path and filename
+		// The assumption is that on OpenShift the UBI-based image is being run
+		detectOpenShift, err := checkOpenShift(context.Background())
+		if err != nil {
+			detectOpenShift = false
+		}
+
+		if csi.Spec.RootCertificateBundle.Key != "" {
+			key = csi.Spec.RootCertificateBundle.Key
+		}
+		if detectOpenShift {
+			path = UBIRootCertFilename
+		} else {
+			path = DistrolessRootCertFilename
+		}
+
+		volumes = append(volumes, corev1.Volume{
+			Name: SharedRootCAVolumeName,
+			VolumeSource: corev1.VolumeSource{
+				ConfigMap: &corev1.ConfigMapVolumeSource{
+					LocalObjectReference: corev1.LocalObjectReference{Name: csi.Spec.RootCertificateBundle.Name},
+					Items: []corev1.KeyToPath{
+						{Key: key, Path: path},
+					},
+				},
+			},
+		})
+	}
+	return volumes
 }
 
 // buildNodeVolumes returns the volumes for the node daemonset

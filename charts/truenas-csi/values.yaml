@@ -98,6 +98,13 @@ controller:
   timeout: 60s
   # Filesystem the provisioner asks for when a StorageClass names none.
   defaultFSType: ext4
+  # extraEnvVars is a list of additional environment variables to set in the controller pod, on the csi-controller container.
+  # This is useful for setting proxy environment variables, for example.
+  extraEnvVars: []
+  # extraVolumes and extraVolumeMounts are lists of additional volumes and volume mounts to set in the controller pod, on the csi-controller container.
+  # This is useful for mounting a Secret or ConfigMap, maybe for a Root CA for example.
+  extraVolumes: []
+  extraVolumeMounts: []
   resources:
     requests:
       memory: 128Mi
