@@ -9,11 +9,12 @@ import (
 	"k8s.io/utils/ptr"
 
 	csiv1alpha1 "github.com/truenas/truenas-csi/operator/api/v1alpha1"
+	"github.com/operator-framework/operator-lib/proxy"
 )
 
 // buildTrueNASEnvVars creates the environment variables for TrueNAS CSI containers
 func buildTrueNASEnvVars(csi *csiv1alpha1.TrueNASCSI) []corev1.EnvVar {
-	return []corev1.EnvVar{
+	baseEnvVars := []corev1.EnvVar{
 		{Name: "CSI_ENDPOINT", Value: CSISocketPath},
 		fieldRefEnvVar("NODE_ID", "spec.nodeName"),
 		configMapEnvVar("TRUENAS_URL", ConfigMapName, "truenasURL", false),
@@ -25,6 +26,13 @@ func buildTrueNASEnvVars(csi *csiv1alpha1.TrueNASCSI) []corev1.EnvVar {
 		configMapEnvVar("TRUENAS_ISCSI_IQN_BASE", ConfigMapName, "iscsiIQNBase", true),
 		configMapEnvVar("TRUENAS_INSECURE_SKIP_VERIFY", ConfigMapName, "truenasInsecure", true),
 	}
+
+	// This appends proxy environmental variables if they are set in the operator's environment.
+	// The CSI driver can use these to configure its HTTP clients.
+	// https://sdk.operatorframework.io/docs/building-operators/golang/references/proxy-vars/
+	baseEnvVars = append(baseEnvVars, proxy.ReadProxyVarsFromEnv()...)
+
+	return baseEnvVars
 }
 
 // fieldRefEnvVar creates an environment variable from a field reference
