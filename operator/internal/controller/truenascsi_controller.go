@@ -342,6 +342,9 @@ func (r *TrueNASCSIReconciler) reconcileNetworkPolicy(ctx context.Context, csi *
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      NetworkPolicyName,
 			Namespace: namespace,
+			OwnerReferences: []metav1.OwnerReference{
+				*metav1.NewControllerRef(csi, csiv1alpha1.GroupVersion.WithKind("TrueNASCSI")),
+			},
 		},
 	}
 
@@ -370,6 +373,9 @@ func (r *TrueNASCSIReconciler) reconcileServiceAccounts(ctx context.Context, csi
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      saName,
 				Namespace: namespace,
+				OwnerReferences: []metav1.OwnerReference{
+					*metav1.NewControllerRef(csi, csiv1alpha1.GroupVersion.WithKind("TrueNASCSI")),
+				},
 			},
 		}
 
@@ -390,7 +396,12 @@ func (r *TrueNASCSIReconciler) reconcileRBAC(ctx context.Context, csi *csiv1alph
 
 	// Controller ClusterRole
 	controllerRole := &rbacv1.ClusterRole{
-		ObjectMeta: metav1.ObjectMeta{Name: ControllerClusterRoleName},
+		ObjectMeta: metav1.ObjectMeta{
+			Name: ControllerClusterRoleName,
+			OwnerReferences: []metav1.OwnerReference{
+				*metav1.NewControllerRef(csi, csiv1alpha1.GroupVersion.WithKind("TrueNASCSI")),
+			},
+		},
 	}
 	_, err := controllerutil.CreateOrUpdate(ctx, r.Client, controllerRole, func() error {
 		controllerRole.Labels = ComponentLabels("")
@@ -421,7 +432,12 @@ func (r *TrueNASCSIReconciler) reconcileRBAC(ctx context.Context, csi *csiv1alph
 
 	// Node ClusterRole
 	nodeRole := &rbacv1.ClusterRole{
-		ObjectMeta: metav1.ObjectMeta{Name: NodeClusterRoleName},
+		ObjectMeta: metav1.ObjectMeta{
+			Name: NodeClusterRoleName,
+			OwnerReferences: []metav1.OwnerReference{
+				*metav1.NewControllerRef(csi, csiv1alpha1.GroupVersion.WithKind("TrueNASCSI")),
+			},
+		},
 	}
 	_, err = controllerutil.CreateOrUpdate(ctx, r.Client, nodeRole, func() error {
 		nodeRole.Labels = ComponentLabels("")
@@ -438,7 +454,12 @@ func (r *TrueNASCSIReconciler) reconcileRBAC(ctx context.Context, csi *csiv1alph
 
 	// Controller ClusterRoleBinding
 	controllerBinding := &rbacv1.ClusterRoleBinding{
-		ObjectMeta: metav1.ObjectMeta{Name: ControllerClusterRoleBindingName},
+		ObjectMeta: metav1.ObjectMeta{
+			Name: ControllerClusterRoleBindingName,
+			OwnerReferences: []metav1.OwnerReference{
+				*metav1.NewControllerRef(csi, csiv1alpha1.GroupVersion.WithKind("TrueNASCSI")),
+			},
+		},
 	}
 	_, err = controllerutil.CreateOrUpdate(ctx, r.Client, controllerBinding, func() error {
 		controllerBinding.Labels = ComponentLabels("")
@@ -458,7 +479,12 @@ func (r *TrueNASCSIReconciler) reconcileRBAC(ctx context.Context, csi *csiv1alph
 
 	// Node ClusterRoleBinding
 	nodeBinding := &rbacv1.ClusterRoleBinding{
-		ObjectMeta: metav1.ObjectMeta{Name: NodeClusterRoleBindingName},
+		ObjectMeta: metav1.ObjectMeta{
+			Name: NodeClusterRoleBindingName,
+			OwnerReferences: []metav1.OwnerReference{
+				*metav1.NewControllerRef(csi, csiv1alpha1.GroupVersion.WithKind("TrueNASCSI")),
+			},
+		},
 	}
 	_, err = controllerutil.CreateOrUpdate(ctx, r.Client, nodeBinding, func() error {
 		nodeBinding.Labels = ComponentLabels("")
@@ -605,6 +631,9 @@ func (r *TrueNASCSIReconciler) reconcileConfigMap(ctx context.Context, csi *csiv
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      ConfigMapName,
 			Namespace: namespace,
+			OwnerReferences: []metav1.OwnerReference{
+				*metav1.NewControllerRef(csi, csiv1alpha1.GroupVersion.WithKind("TrueNASCSI")),
+			},
 		},
 	}
 
@@ -634,6 +663,9 @@ func (r *TrueNASCSIReconciler) reconcileControllerDeployment(ctx context.Context
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      ControllerDeploymentName,
 			Namespace: namespace,
+			OwnerReferences: []metav1.OwnerReference{
+				*metav1.NewControllerRef(csi, csiv1alpha1.GroupVersion.WithKind("TrueNASCSI")),
+			},
 		},
 	}
 
@@ -676,6 +708,9 @@ func (r *TrueNASCSIReconciler) reconcileNodeDaemonSet(ctx context.Context, csi *
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      NodeDaemonSetName,
 			Namespace: namespace,
+			OwnerReferences: []metav1.OwnerReference{
+				*metav1.NewControllerRef(csi, csiv1alpha1.GroupVersion.WithKind("TrueNASCSI")),
+			},
 		},
 	}
 
