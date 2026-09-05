@@ -163,7 +163,7 @@ func (r *TrueNASCSIReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 	}
 
 	log.V(1).Info("Reconciling CSIDriver")
-	if err := r.reconcileCSIDriver(ctx); err != nil {
+	if err := r.reconcileCSIDriver(ctx, csi); err != nil {
 		log.Error(err, "Failed to reconcile CSIDriver")
 		return r.updateStatusFailed(ctx, csi, err)
 	}
@@ -592,7 +592,7 @@ func (r *TrueNASCSIReconciler) reconcileSCC(ctx context.Context, csi *csiv1alpha
 	return nil
 }
 
-func (r *TrueNASCSIReconciler) reconcileCSIDriver(ctx context.Context) error {
+func (r *TrueNASCSIReconciler) reconcileCSIDriver(ctx context.Context, csi *csiv1alpha1.TrueNASCSI) error {
 	attachRequired := true
 	podInfoOnMount := true
 	fsGroupPolicy := storagev1.FileFSGroupPolicy
@@ -601,6 +601,9 @@ func (r *TrueNASCSIReconciler) reconcileCSIDriver(ctx context.Context) error {
 		ObjectMeta: metav1.ObjectMeta{
 			Name:   DriverName,
 			Labels: ComponentLabels(""),
+			OwnerReferences: []metav1.OwnerReference{
+				*metav1.NewControllerRef(csi, csiv1alpha1.GroupVersion.WithKind("TrueNASCSI")),
+			},
 		},
 		Spec: storagev1.CSIDriverSpec{
 			AttachRequired: &attachRequired,
@@ -955,6 +958,12 @@ func (r *TrueNASCSIReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		For(&csiv1alpha1.TrueNASCSI{}).
 		Owns(&appsv1.Deployment{}).
 		Owns(&appsv1.DaemonSet{}).
+		Owns(&corev1.ConfigMap{}).
+		Owns(&rbacv1.ClusterRole{}).
+		Owns(&rbacv1.ClusterRoleBinding{}).
+		Owns(&corev1.ServiceAccount{}).
+		Owns(&networkingv1.NetworkPolicy{}).
+		Owns(&storagev1.CSIDriver{}).
 		Named("truenascsi").
 		Complete(r)
 }
