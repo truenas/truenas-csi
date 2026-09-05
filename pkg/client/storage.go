@@ -841,20 +841,25 @@ func (c *Client) GetISCSITargetByID(ctx context.Context, id int) (*ISCSITarget, 
 
 // CreateISCSITarget creates a new iSCSI target with the specified name and alias.
 func (c *Client) CreateISCSITarget(ctx context.Context, name, alias string, portalID int) (*ISCSITarget, error) {
-	return c.CreateISCSITargetWithAuth(ctx, name, alias, portalID, 0, 0)
+	return c.CreateISCSITargetWithAuth(ctx, name, alias, portalID, 0, 0, false)
 }
 
 // CreateISCSITargetWithAuth creates a new iSCSI target with optional auth and initiator groups.
 // portalID: TrueNAS portal group ID (required)
 // authTag: CHAP authentication group tag (0 to skip)
 // initiatorID: Initiator group ID (0 to skip)
-func (c *Client) CreateISCSITargetWithAuth(ctx context.Context, name, alias string, portalID, authTag, initiatorID int) (*ISCSITarget, error) {
+// mutualCHAP: when true (and authTag > 0) the target group uses CHAP_MUTUAL, so the
+// target authenticates back to the initiator using the auth group's peer credentials.
+func (c *Client) CreateISCSITargetWithAuth(ctx context.Context, name, alias string, portalID, authTag, initiatorID int, mutualCHAP bool) (*ISCSITarget, error) {
 	group := ISCSITargetGroup{
 		Portal: portalID,
 	}
 
 	if authTag > 0 {
 		group.AuthMethod = "CHAP"
+		if mutualCHAP {
+			group.AuthMethod = "CHAP_MUTUAL"
+		}
 		group.Auth = authTag
 	}
 

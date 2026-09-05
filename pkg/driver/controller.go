@@ -88,9 +88,8 @@ const (
 	paramISCSIChapPeerSecret = "iscsi.chapPeerSecret"
 	paramISCSIInitiators     = "iscsi.initiators"
 
-	// iSCSI auth types
-	iscsiAuthTypeCHAP   = "chap"
-	iscsiAuthTypeMutual = "CHAP_MUTUAL"
+	// iSCSI auth type for the node-side connector (csi-lib-iscsi expects "chap")
+	iscsiAuthTypeCHAP = "chap"
 
 	// NVMe-oF parameters. DH-CHAP credentials are plaintext StorageClass params
 	// (like iSCSI CHAP) and flow to the node via the volume context.
@@ -992,7 +991,7 @@ func (s *ControllerServer) ensureISCSIChain(ctx context.Context, volumeID, datas
 		// Extent doesn't exist - create it along with target and association
 		s.driver.Log().Info("iSCSI extent missing for existing ZVOL, completing iSCSI setup", "volumeId", volumeID, "zvolPath", zvolPath)
 
-		target, err := s.driver.Client().CreateISCSITargetWithAuth(ctx, targetSuffix, fmt.Sprintf("CSI volume %s", volumeID), portalID, 0, 0)
+		target, err := s.driver.Client().CreateISCSITargetWithAuth(ctx, targetSuffix, fmt.Sprintf("CSI volume %s", volumeID), portalID, 0, 0, false)
 		if err != nil {
 			// Target may already exist from a partial creation
 			target, err = s.driver.Client().GetISCSITargetByName(ctx, targetSuffix)
@@ -1026,7 +1025,7 @@ func (s *ControllerServer) ensureISCSIChain(ctx context.Context, volumeID, datas
 		// Find or create the target, then create the association.
 		s.driver.Log().Info("iSCSI target-extent association missing, completing setup", "volumeId", volumeID, "extentId", extent.ID)
 
-		target, tErr := s.driver.Client().CreateISCSITargetWithAuth(ctx, targetSuffix, fmt.Sprintf("CSI volume %s", volumeID), portalID, 0, 0)
+		target, tErr := s.driver.Client().CreateISCSITargetWithAuth(ctx, targetSuffix, fmt.Sprintf("CSI volume %s", volumeID), portalID, 0, 0, false)
 		if tErr != nil {
 			target, tErr = s.driver.Client().GetISCSITargetByName(ctx, targetSuffix)
 			if tErr != nil {
@@ -1106,6 +1105,7 @@ func (s *ControllerServer) createISCSIVolume(ctx context.Context, volumeID, data
 	// Create CHAP auth group if credentials are provided
 	var authID int
 	var authTag int
+	var mutualCHAP bool
 	if chapUser, ok := parameters[paramISCSIChapUser]; ok && chapUser != "" {
 		chapSecret := parameters[paramISCSIChapSecret]
 		if chapSecret == "" {
@@ -1130,7 +1130,12 @@ func (s *ControllerServer) createISCSIVolume(ctx context.Context, volumeID, data
 		if peerUser, ok := parameters[paramISCSIChapPeerUser]; ok && peerUser != "" {
 			authOpts.PeerUser = peerUser
 			authOpts.PeerSecret = parameters[paramISCSIChapPeerSecret]
-			authOpts.DiscoveryAuth = iscsiAuthTypeMutual
+			// Mutual CHAP is enforced at the target group (authmethod=CHAP_MUTUAL),
+			// not via discovery_auth on the per-volume auth group: discovery auth is
+			// a portal-level setting, so stamping it per volume collides across
+			// volumes. The auth group still carries peeruser/peersecret, which the
+			// target uses to authenticate back to the initiator.
+			mutualCHAP = true
 		}
 
 		auth, err := s.driver.Client().CreateISCSIAuth(ctx, authOpts)
@@ -1173,7 +1178,7 @@ func (s *ControllerServer) createISCSIVolume(ctx context.Context, volumeID, data
 	iqnBase := s.driver.ResolveISCSIIQNBase(ctx, parameters)
 
 	targetSuffix := makeISCSITargetSuffix(volumeID)
-	target, err := s.driver.Client().CreateISCSITargetWithAuth(ctx, targetSuffix, fmt.Sprintf("CSI volume %s", volumeID), portalID, authTag, initiatorID)
+	target, err := s.driver.Client().CreateISCSITargetWithAuth(ctx, targetSuffix, fmt.Sprintf("CSI volume %s", volumeID), portalID, authTag, initiatorID, mutualCHAP)
 	if err != nil {
 		// Cleanup auth and initiator if created
 		if initiatorID > 0 {

@@ -408,7 +408,7 @@ func TestCreateISCSITargetWithAuth_Success(t *testing.T) {
 
 	client := connectTestClient(t, mock)
 
-	target, err := client.CreateISCSITargetWithAuth(testContext(t), "target2", "alias2", 1, 5, 10)
+	target, err := client.CreateISCSITargetWithAuth(testContext(t), "target2", "alias2", 1, 5, 10, false)
 
 	assertNoError(t, err)
 	assertNotNil(t, target)
@@ -417,6 +417,38 @@ func TestCreateISCSITargetWithAuth_Success(t *testing.T) {
 	assertEqual(t, target.Groups[0].AuthMethod, "CHAP")
 	assertEqual(t, target.Groups[0].Auth, 5)
 	assertEqual(t, target.Groups[0].Initiator, 10)
+}
+
+func TestCreateISCSITargetWithAuth_MutualCHAP(t *testing.T) {
+	mock := NewMockTrueNASServer()
+	defer mock.Close()
+
+	// Capture the create params to assert the target group requests mutual CHAP.
+	mock.SetResponse(methodISCSITargetCreate, MockResponse{
+		Result: ISCSITarget{
+			ID:    3,
+			Name:  "target3",
+			Alias: "alias3",
+			Mode:  "ISCSI",
+			Groups: []ISCSITargetGroup{
+				{Portal: 1, AuthMethod: "CHAP_MUTUAL", Auth: 7},
+			},
+		},
+	})
+
+	client := connectTestClient(t, mock)
+
+	_, err := client.CreateISCSITargetWithAuth(testContext(t), "target3", "alias3", 1, 7, 0, true)
+	assertNoError(t, err)
+
+	// The request sent to TrueNAS must set authmethod=CHAP_MUTUAL on the group.
+	params := firstParamMap(t, mock, methodISCSITargetCreate)
+	groups, ok := params["groups"].([]any)
+	if !ok || len(groups) == 0 {
+		t.Fatalf("expected groups in create params, got %#v", params["groups"])
+	}
+	group := groups[0].(map[string]any)
+	assertEqual(t, group["authmethod"].(string), "CHAP_MUTUAL")
 }
 
 func TestGetISCSITargetByName_Success(t *testing.T) {
