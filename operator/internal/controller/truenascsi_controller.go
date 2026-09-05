@@ -163,7 +163,7 @@ func (r *TrueNASCSIReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 	}
 
 	log.V(1).Info("Reconciling CSIDriver")
-	if err := r.reconcileCSIDriver(ctx); err != nil {
+	if err := r.reconcileCSIDriver(ctx, csi); err != nil {
 		log.Error(err, "Failed to reconcile CSIDriver")
 		return r.updateStatusFailed(ctx, csi, err)
 	}
@@ -342,6 +342,9 @@ func (r *TrueNASCSIReconciler) reconcileNetworkPolicy(ctx context.Context, csi *
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      NetworkPolicyName,
 			Namespace: namespace,
+			OwnerReferences: []metav1.OwnerReference{
+				*metav1.NewControllerRef(csi, csiv1alpha1.GroupVersion.WithKind("TrueNASCSI")),
+			},
 		},
 	}
 
@@ -370,6 +373,9 @@ func (r *TrueNASCSIReconciler) reconcileServiceAccounts(ctx context.Context, csi
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      saName,
 				Namespace: namespace,
+				OwnerReferences: []metav1.OwnerReference{
+					*metav1.NewControllerRef(csi, csiv1alpha1.GroupVersion.WithKind("TrueNASCSI")),
+				},
 			},
 		}
 
@@ -390,7 +396,12 @@ func (r *TrueNASCSIReconciler) reconcileRBAC(ctx context.Context, csi *csiv1alph
 
 	// Controller ClusterRole
 	controllerRole := &rbacv1.ClusterRole{
-		ObjectMeta: metav1.ObjectMeta{Name: ControllerClusterRoleName},
+		ObjectMeta: metav1.ObjectMeta{
+			Name: ControllerClusterRoleName,
+			OwnerReferences: []metav1.OwnerReference{
+				*metav1.NewControllerRef(csi, csiv1alpha1.GroupVersion.WithKind("TrueNASCSI")),
+			},
+		},
 	}
 	_, err := controllerutil.CreateOrUpdate(ctx, r.Client, controllerRole, func() error {
 		controllerRole.Labels = ComponentLabels("")
@@ -421,7 +432,12 @@ func (r *TrueNASCSIReconciler) reconcileRBAC(ctx context.Context, csi *csiv1alph
 
 	// Node ClusterRole
 	nodeRole := &rbacv1.ClusterRole{
-		ObjectMeta: metav1.ObjectMeta{Name: NodeClusterRoleName},
+		ObjectMeta: metav1.ObjectMeta{
+			Name: NodeClusterRoleName,
+			OwnerReferences: []metav1.OwnerReference{
+				*metav1.NewControllerRef(csi, csiv1alpha1.GroupVersion.WithKind("TrueNASCSI")),
+			},
+		},
 	}
 	_, err = controllerutil.CreateOrUpdate(ctx, r.Client, nodeRole, func() error {
 		nodeRole.Labels = ComponentLabels("")
@@ -438,7 +454,12 @@ func (r *TrueNASCSIReconciler) reconcileRBAC(ctx context.Context, csi *csiv1alph
 
 	// Controller ClusterRoleBinding
 	controllerBinding := &rbacv1.ClusterRoleBinding{
-		ObjectMeta: metav1.ObjectMeta{Name: ControllerClusterRoleBindingName},
+		ObjectMeta: metav1.ObjectMeta{
+			Name: ControllerClusterRoleBindingName,
+			OwnerReferences: []metav1.OwnerReference{
+				*metav1.NewControllerRef(csi, csiv1alpha1.GroupVersion.WithKind("TrueNASCSI")),
+			},
+		},
 	}
 	_, err = controllerutil.CreateOrUpdate(ctx, r.Client, controllerBinding, func() error {
 		controllerBinding.Labels = ComponentLabels("")
@@ -458,7 +479,12 @@ func (r *TrueNASCSIReconciler) reconcileRBAC(ctx context.Context, csi *csiv1alph
 
 	// Node ClusterRoleBinding
 	nodeBinding := &rbacv1.ClusterRoleBinding{
-		ObjectMeta: metav1.ObjectMeta{Name: NodeClusterRoleBindingName},
+		ObjectMeta: metav1.ObjectMeta{
+			Name: NodeClusterRoleBindingName,
+			OwnerReferences: []metav1.OwnerReference{
+				*metav1.NewControllerRef(csi, csiv1alpha1.GroupVersion.WithKind("TrueNASCSI")),
+			},
+		},
 	}
 	_, err = controllerutil.CreateOrUpdate(ctx, r.Client, nodeBinding, func() error {
 		nodeBinding.Labels = ComponentLabels("")
@@ -547,6 +573,8 @@ func (r *TrueNASCSIReconciler) reconcileSCC(ctx context.Context, csi *csiv1alpha
 		scc.SetGroupVersionKind(sccGVK)
 		scc.SetName(def.name)
 
+		controllerutil.SetControllerReference(csi, scc, r.Scheme)
+
 		_, err := controllerutil.CreateOrUpdate(ctx, r.Client, scc, func() error {
 			scc.SetLabels(ComponentLabels(def.component))
 			for k, v := range def.fields {
@@ -566,7 +594,7 @@ func (r *TrueNASCSIReconciler) reconcileSCC(ctx context.Context, csi *csiv1alpha
 	return nil
 }
 
-func (r *TrueNASCSIReconciler) reconcileCSIDriver(ctx context.Context) error {
+func (r *TrueNASCSIReconciler) reconcileCSIDriver(ctx context.Context, csi *csiv1alpha1.TrueNASCSI) error {
 	attachRequired := true
 	podInfoOnMount := true
 	fsGroupPolicy := storagev1.FileFSGroupPolicy
@@ -575,6 +603,9 @@ func (r *TrueNASCSIReconciler) reconcileCSIDriver(ctx context.Context) error {
 		ObjectMeta: metav1.ObjectMeta{
 			Name:   DriverName,
 			Labels: ComponentLabels(""),
+			OwnerReferences: []metav1.OwnerReference{
+				*metav1.NewControllerRef(csi, csiv1alpha1.GroupVersion.WithKind("TrueNASCSI")),
+			},
 		},
 		Spec: storagev1.CSIDriverSpec{
 			AttachRequired: &attachRequired,
@@ -605,6 +636,9 @@ func (r *TrueNASCSIReconciler) reconcileConfigMap(ctx context.Context, csi *csiv
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      ConfigMapName,
 			Namespace: namespace,
+			OwnerReferences: []metav1.OwnerReference{
+				*metav1.NewControllerRef(csi, csiv1alpha1.GroupVersion.WithKind("TrueNASCSI")),
+			},
 		},
 	}
 
@@ -634,6 +668,9 @@ func (r *TrueNASCSIReconciler) reconcileControllerDeployment(ctx context.Context
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      ControllerDeploymentName,
 			Namespace: namespace,
+			OwnerReferences: []metav1.OwnerReference{
+				*metav1.NewControllerRef(csi, csiv1alpha1.GroupVersion.WithKind("TrueNASCSI")),
+			},
 		},
 	}
 
@@ -676,6 +713,9 @@ func (r *TrueNASCSIReconciler) reconcileNodeDaemonSet(ctx context.Context, csi *
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      NodeDaemonSetName,
 			Namespace: namespace,
+			OwnerReferences: []metav1.OwnerReference{
+				*metav1.NewControllerRef(csi, csiv1alpha1.GroupVersion.WithKind("TrueNASCSI")),
+			},
 		},
 	}
 
@@ -920,6 +960,13 @@ func (r *TrueNASCSIReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		For(&csiv1alpha1.TrueNASCSI{}).
 		Owns(&appsv1.Deployment{}).
 		Owns(&appsv1.DaemonSet{}).
+		Owns(&corev1.ConfigMap{}).
+		Owns(&rbacv1.ClusterRole{}).
+		Owns(&rbacv1.ClusterRoleBinding{}).
+		Owns(&corev1.ServiceAccount{}).
+		Owns(&networkingv1.NetworkPolicy{}).
+		Owns(&storagev1.CSIDriver{}).
+		Owns(&unstructured.Unstructured{Object: map[string]any{"apiVersion": "security.openshift.io/v1", "kind": "SecurityContextConstraints"}}).
 		Named("truenascsi").
 		Complete(r)
 }
