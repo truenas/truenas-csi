@@ -21,6 +21,12 @@ spec:
   # Optional: Skip TLS verification (default: false)
   insecureSkipTLS: false
 
+  # Optional: Root certificate PEM bundle for TrueNAS API (default: system CA)
+  # rootCertificateBundle:
+  #   name: "truenas-root-ca"
+  #   # Key in the Secret containing the PEM bundle (default: "ca-bundle.crt")
+  #   key: "ca-bundle.crt"
+
   # Optional: Custom driver image
   # driverImage: "quay.io/truenas_solutions/truenas-csi:latest"
 
