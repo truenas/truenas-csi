@@ -8,8 +8,8 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 	"k8s.io/utils/ptr"
 
-	csiv1alpha1 "github.com/truenas/truenas-csi/operator/api/v1alpha1"
 	"github.com/operator-framework/operator-lib/proxy"
+	csiv1alpha1 "github.com/truenas/truenas-csi/operator/api/v1alpha1"
 )
 
 // buildTrueNASEnvVars creates the environment variables for TrueNAS CSI containers
