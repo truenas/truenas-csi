@@ -86,10 +86,12 @@ const (
 	paramISCSIChapSecret     = "iscsi.chapSecret"
 	paramISCSIChapPeerUser   = "iscsi.chapPeerUser"
 	paramISCSIChapPeerSecret = "iscsi.chapPeerSecret"
+	paramISCSIAnonDiscovery  = "iscsi.chapAnonymousDiscovery"
 	paramISCSIInitiators     = "iscsi.initiators"
 
 	// iSCSI auth types
-	iscsiAuthTypeCHAP   = "chap"
+	iscsiAuthTypeNone   = "NONE"
+	iscsiAuthTypeCHAP   = "CHAP"
 	iscsiAuthTypeMutual = "CHAP_MUTUAL"
 
 	// NVMe-oF parameters. DH-CHAP credentials are plaintext StorageClass params
@@ -1106,6 +1108,7 @@ func (s *ControllerServer) createISCSIVolume(ctx context.Context, volumeID, data
 	// Create CHAP auth group if credentials are provided
 	var authID int
 	var authTag int
+	var authDiscovery string
 	if chapUser, ok := parameters[paramISCSIChapUser]; ok && chapUser != "" {
 		chapSecret := parameters[paramISCSIChapSecret]
 		if chapSecret == "" {
@@ -1124,6 +1127,7 @@ func (s *ControllerServer) createISCSIVolume(ctx context.Context, volumeID, data
 			Tag:    nextTag,
 			User:   chapUser,
 			Secret: chapSecret,
+			DiscoveryAuth: iscsiAuthTypeCHAP,
 		}
 
 		// Add mutual CHAP if provided
@@ -1133,14 +1137,22 @@ func (s *ControllerServer) createISCSIVolume(ctx context.Context, volumeID, data
 			authOpts.DiscoveryAuth = iscsiAuthTypeMutual
 		}
 
+    if anonDiscovery, ok := parameters[paramISCSIAnonDiscovery]; ok && strings.EqualFold(anonDiscovery, "true") {
+		  s.driver.Log().V(LogLevelDebug).Info("Forcing anonymous discovery due to parameter.")
+			authOpts.DiscoveryAuth = iscsiAuthTypeNone
+		}
+
 		auth, err := s.driver.Client().CreateISCSIAuth(ctx, authOpts)
 		if err != nil {
 			s.driver.Client().DeleteDataset(ctx, datasetPath, &client.DatasetDeleteOptions{Recursive: true, Force: true})
 			return nil, fmt.Errorf("failed to create CHAP auth: %w", err)
 		}
+
 		authID = auth.ID
 		authTag = auth.Tag
-		s.driver.Log().V(LogLevelDebug).Info("Created CHAP auth for iSCSI target", "authId", authID, "tag", authTag, "user", chapUser)
+		authDiscovery = auth.DiscoveryAuth
+
+		s.driver.Log().V(LogLevelDebug).Info("Created CHAP auth for iSCSI target", "authId", authID, "tag", authTag, "user", chapUser, "discovery_auth", authDiscovery)
 
 		// The target now requires CHAP; make sure the node can authenticate by
 		// mirroring the credentials into the node-side parameters carried in the

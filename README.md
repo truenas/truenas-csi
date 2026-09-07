@@ -219,6 +219,7 @@ squashed. Requires the workload to set a pod `securityContext.fsGroup`. See
 | `iscsi.chapSecret` | CHAP password (12-16 chars) | string |
 | `iscsi.chapPeerUser` | Mutual CHAP peer user | string |
 | `iscsi.chapPeerSecret` | Mutual CHAP peer password | string |
+| `iscsi.chapAnonymousDiscovery` | Force anonymous discovery even if CHAP credentials are supplied; default `false` | `true`, `false` | | string |
 | `iscsi.multipathEnabled` | Enable multipath for the session (node-side); default `false` | `true`, `false` |
 | `iscsi.persistentSessions` | Keep the iSCSI session persistent (node-side); default `false` | `true`, `false` |
 
