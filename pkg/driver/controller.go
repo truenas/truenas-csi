@@ -1356,12 +1356,14 @@ func (s *ControllerServer) createVolumeFromSource(ctx context.Context, req *csi.
 		}
 
 		_, err = s.driver.Client().CloneSnapshot(ctx, snapshot.ID, datasetPath)
+		// The new clone depends on this snapshot. Request deferred cleanup even
+		// if cloning fails, and keep the original clone error if cleanup also fails.
+		if cleanupErr := s.driver.Client().DeleteSnapshot(ctx, snapshot.ID); cleanupErr != nil && !client.IsNotFoundError(cleanupErr) {
+			s.driver.Log().Error(cleanupErr, "Failed to delete temporary clone snapshot", "snapshotId", snapshot.ID)
+		}
 		if err != nil {
-			s.driver.Client().DeleteSnapshot(ctx, snapshot.ID)
 			return nil, status.Errorf(codes.Internal, "failed to clone volume: %v", err)
 		}
-
-		s.driver.Client().DeleteSnapshot(ctx, snapshot.ID)
 
 		requiredBytes := req.CapacityRange.RequiredBytes
 		if requiredBytes > 0 && requiredBytes < minVolumeSize {
@@ -2073,9 +2075,7 @@ func (s *ControllerServer) DeleteSnapshot(ctx context.Context, req *csi.DeleteSn
 		if client.IsNotFoundError(err) {
 			return &csi.DeleteSnapshotResponse{}, nil
 		}
-		// For other errors, also return success for idempotency
-		s.driver.Log().V(LogLevelDebug).Info("Snapshot delete error, treating as already deleted", "snapshotId", req.SnapshotId, "error", err)
-		return &csi.DeleteSnapshotResponse{}, nil
+		return nil, status.Errorf(codes.Internal, "failed to delete snapshot %s: %v", req.SnapshotId, err)
 	}
 
 	return &csi.DeleteSnapshotResponse{}, nil

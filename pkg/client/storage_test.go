@@ -879,6 +879,20 @@ func TestDeleteSnapshot_Success(t *testing.T) {
 
 	assertNoError(t, err)
 	assertRequestMethod(t, mock, methodSnapshotDelete)
+
+	requests := mock.GetRequestsByMethod(methodSnapshotDelete)
+	assertLen(t, requests, 1)
+	var params []json.RawMessage
+	assertNoError(t, json.Unmarshal(requests[0].Params, &params))
+	assertLen(t, params, 2)
+	var name string
+	var options SnapshotDeleteOptions
+	assertNoError(t, json.Unmarshal(params[0], &name))
+	assertNoError(t, json.Unmarshal(params[1], &options))
+	assertEqual(t, name, "tank/data@snap1")
+	if !options.Defer || options.Recursive {
+		t.Errorf("snapshot deletion options = %+v, want defer=true and recursive=false", options)
+	}
 }
 
 func TestListSnapshots_Success(t *testing.T) {

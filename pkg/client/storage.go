@@ -1111,10 +1111,11 @@ func (c *Client) CreateSnapshot(ctx context.Context, dataset, name string, recur
 	return &snapshot, nil
 }
 
-// DeleteSnapshot deletes a ZFS snapshot by name.
+// DeleteSnapshot deletes a ZFS snapshot by name. Snapshots with dependent clones
+// or holds are marked for destruction and reclaimed when those references are gone.
 func (c *Client) DeleteSnapshot(ctx context.Context, name string) error {
 	options := &SnapshotDeleteOptions{
-		Defer: false,
+		Defer: true,
 	}
 
 	err := c.Call(ctx, methodSnapshotDelete, []any{name, options}, nil)
