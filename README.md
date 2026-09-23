@@ -170,6 +170,17 @@ With Helm they are set through values instead; see the
 | `metricsAddr` | Prometheus metrics address for the controller (optional; disabled when absent) | `:8080` |
 | `nodeMetricsAddr` | Prometheus metrics address for the node plugin, which uses hostNetwork (optional) | `:8080` |
 
+The pods read these settings, and the API key from the Secret, only when they
+start. After editing either one, restart both workloads to apply the change:
+
+```bash
+kubectl -n truenas-csi rollout restart deployment/truenas-csi-controller
+kubectl -n truenas-csi rollout restart daemonset/truenas-csi-node
+```
+
+The Helm chart and the OpenShift operator do this for you: changing a setting or
+the API key rolls the pods.
+
 ### StorageClass Parameters
 
 #### General Parameters

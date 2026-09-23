@@ -309,6 +309,12 @@ operator/
 8. **Controller Deployment** - Deploy CSI controller with sidecars
 9. **Node DaemonSet** - Deploy CSI node pods on all nodes
 
+The pods read the ConfigMap and the API key through environment variables, which
+are resolved only at startup. Both pod templates carry a hash of those values in
+the `csi.truenas.io/config-hash` annotation, so a change to either rolls the pods.
+The operator also watches the credentials Secret, so a key rotation rolls them
+without waiting for the next periodic reconcile.
+
 ### Error Handling
 
 The controller uses standard controller-runtime error handling:

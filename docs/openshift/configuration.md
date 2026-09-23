@@ -69,6 +69,11 @@ spec:
 | `nodeSelector` | map | No | - | Node selector labels |
 | `tolerations` | array | No | - | Pod tolerations |
 
+Editing the TrueNASCSI resource, or rotating the API key in its credentials
+Secret, rolls the controller and node pods so they pick up the change. The
+operator tracks the settings the pods read through a hash on their templates, so
+re-applying an unchanged resource restarts nothing.
+
 ### Status Fields
 
 The operator updates the status subresource with deployment information:
