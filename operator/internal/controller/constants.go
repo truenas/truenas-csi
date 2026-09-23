@@ -37,6 +37,12 @@ const (
 	ConfigHashAnnotation = "csi.truenas.io/config-hash"
 )
 
+// Status condition reasons
+const (
+	// ReasonRemoved is the Ready condition's reason under managementState Removed.
+	ReasonRemoved = "Removed"
+)
+
 // Service accounts
 const (
 	ControllerServiceAccount = "truenas-csi-controller-sa"
