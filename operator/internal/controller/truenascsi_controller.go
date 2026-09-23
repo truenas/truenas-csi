@@ -22,6 +22,7 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
+	"sigs.k8s.io/controller-runtime/pkg/handler"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
@@ -174,14 +175,20 @@ func (r *TrueNASCSIReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 		return r.updateStatusFailed(ctx, csi, err)
 	}
 
+	configHash, err := r.workloadConfigHash(ctx, csi)
+	if err != nil {
+		log.Error(err, "Failed to hash workload configuration")
+		return r.updateStatusFailed(ctx, csi, err)
+	}
+
 	log.V(1).Info("Reconciling controller deployment")
-	if err := r.reconcileControllerDeployment(ctx, csi); err != nil {
+	if err := r.reconcileControllerDeployment(ctx, csi, configHash); err != nil {
 		log.Error(err, "Failed to reconcile controller deployment")
 		return r.updateStatusFailed(ctx, csi, err)
 	}
 
 	log.V(1).Info("Reconciling node daemonset")
-	if err := r.reconcileNodeDaemonSet(ctx, csi); err != nil {
+	if err := r.reconcileNodeDaemonSet(ctx, csi, configHash); err != nil {
 		log.Error(err, "Failed to reconcile node daemonset")
 		return r.updateStatusFailed(ctx, csi, err)
 	}
@@ -610,21 +617,28 @@ func (r *TrueNASCSIReconciler) reconcileConfigMap(ctx context.Context, csi *csiv
 
 	_, err := controllerutil.CreateOrUpdate(ctx, r.Client, cm, func() error {
 		cm.Labels = ComponentLabels("")
-		cm.Data = map[string]string{
-			"truenasURL":      csi.Spec.TrueNASURL,
-			"defaultPool":     csi.Spec.DefaultPool,
-			"nfsServer":       csi.Spec.NFSServer,
-			"iscsiPortal":     csi.Spec.ISCSIPortal,
-			"nvmeofPortal":    csi.Spec.NVMeOFPortal,
-			"iscsiIQNBase":    csi.Spec.ISCSIIQNBase,
-			"truenasInsecure": fmt.Sprintf("%t", csi.Spec.InsecureSkipTLS),
-		}
+		cm.Data = configMapData(csi)
 		return nil
 	})
 	return err
 }
 
-func (r *TrueNASCSIReconciler) reconcileControllerDeployment(ctx context.Context, csi *csiv1alpha1.TrueNASCSI) error {
+// configMapData returns the driver settings the operator publishes in the
+// ConfigMap. The config hash is computed from the same data, so the two cannot
+// disagree about what the pods should be running with.
+func configMapData(csi *csiv1alpha1.TrueNASCSI) map[string]string {
+	return map[string]string{
+		"truenasURL":      csi.Spec.TrueNASURL,
+		"defaultPool":     csi.Spec.DefaultPool,
+		"nfsServer":       csi.Spec.NFSServer,
+		"iscsiPortal":     csi.Spec.ISCSIPortal,
+		"nvmeofPortal":    csi.Spec.NVMeOFPortal,
+		"iscsiIQNBase":    csi.Spec.ISCSIIQNBase,
+		"truenasInsecure": fmt.Sprintf("%t", csi.Spec.InsecureSkipTLS),
+	}
+}
+
+func (r *TrueNASCSIReconciler) reconcileControllerDeployment(ctx context.Context, csi *csiv1alpha1.TrueNASCSI, configHash string) error {
 	namespace := getNamespace(csi)
 	replicas := getControllerReplicas(csi)
 	driverImage := getDriverImage(csi)
@@ -638,6 +652,9 @@ func (r *TrueNASCSIReconciler) reconcileControllerDeployment(ctx context.Context
 	}
 
 	_, err := controllerutil.CreateOrUpdate(ctx, r.Client, deployment, func() error {
+		// Read before the spec is replaced below.
+		annotations := podTemplateAnnotations(deployment.Spec.Template.Annotations, configHash)
+
 		deployment.Labels = ComponentLabels("controller")
 		deployment.Spec = appsv1.DeploymentSpec{
 			Replicas: &replicas,
@@ -646,7 +663,8 @@ func (r *TrueNASCSIReconciler) reconcileControllerDeployment(ctx context.Context
 			},
 			Template: corev1.PodTemplateSpec{
 				ObjectMeta: metav1.ObjectMeta{
-					Labels: ComponentLabels("controller"),
+					Labels:      ComponentLabels("controller"),
+					Annotations: annotations,
 				},
 				Spec: corev1.PodSpec{
 					ServiceAccountName: ControllerServiceAccount,
@@ -667,7 +685,7 @@ func (r *TrueNASCSIReconciler) reconcileControllerDeployment(ctx context.Context
 	return err
 }
 
-func (r *TrueNASCSIReconciler) reconcileNodeDaemonSet(ctx context.Context, csi *csiv1alpha1.TrueNASCSI) error {
+func (r *TrueNASCSIReconciler) reconcileNodeDaemonSet(ctx context.Context, csi *csiv1alpha1.TrueNASCSI, configHash string) error {
 	namespace := getNamespace(csi)
 	driverImage := getDriverImage(csi)
 	logLevel := getLogLevel(csi)
@@ -680,6 +698,9 @@ func (r *TrueNASCSIReconciler) reconcileNodeDaemonSet(ctx context.Context, csi *
 	}
 
 	_, err := controllerutil.CreateOrUpdate(ctx, r.Client, daemonset, func() error {
+		// Read before the spec is replaced below.
+		annotations := podTemplateAnnotations(daemonset.Spec.Template.Annotations, configHash)
+
 		daemonset.Labels = ComponentLabels("node")
 		daemonset.Spec = appsv1.DaemonSetSpec{
 			Selector: &metav1.LabelSelector{
@@ -687,7 +708,8 @@ func (r *TrueNASCSIReconciler) reconcileNodeDaemonSet(ctx context.Context, csi *
 			},
 			Template: corev1.PodTemplateSpec{
 				ObjectMeta: metav1.ObjectMeta{
-					Labels: ComponentLabels("node"),
+					Labels:      ComponentLabels("node"),
+					Annotations: annotations,
 				},
 				Spec: corev1.PodSpec{
 					ServiceAccountName: NodeServiceAccount,
@@ -920,6 +942,9 @@ func (r *TrueNASCSIReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		For(&csiv1alpha1.TrueNASCSI{}).
 		Owns(&appsv1.Deployment{}).
 		Owns(&appsv1.DaemonSet{}).
+		// The API key reaches the pods from a Secret the user manages, so a rotation
+		// has to trigger a reconcile for the new config hash to roll them.
+		Watches(&corev1.Secret{}, handler.EnqueueRequestsFromMapFunc(r.requestsForCredentialsSecret)).
 		Named("truenascsi").
 		Complete(r)
 }

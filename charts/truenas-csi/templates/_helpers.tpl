@@ -29,6 +29,17 @@ app.kubernetes.io/part-of: {{ include "truenas-csi.name" . }}
 {{- end -}}
 
 {{/*
+Pod template annotation that changes with the ConfigMap and Secret. The containers
+read both through environment variables, which are resolved only when a container
+starts, so without it an upgrade that changes a setting would leave the pods on the
+old value. A Secret named by truenas.existingSecret is not rendered by the chart, so
+rotating the key in it is not covered.
+*/}}
+{{- define "truenas-csi.configChecksum" -}}
+checksum/config: {{ include (print .Template.BasePath "/config.yaml") . | sha256sum }}
+{{- end -}}
+
+{{/*
 Selector label for the controller. Immutable once deployed.
 */}}
 {{- define "truenas-csi.controllerSelectorLabel" -}}

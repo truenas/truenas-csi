@@ -25,6 +25,18 @@ const (
 	NetworkPolicyName        = "truenas-csi-allow-metrics"
 )
 
+// Workload configuration
+const (
+	// CredentialsSecretKey is the key in the credentials Secret that holds the
+	// TrueNAS API key.
+	CredentialsSecretKey = "api-key"
+
+	// ConfigHashAnnotation is set on the CSI pod templates to a hash of the
+	// configuration their containers read from the environment, so that changing
+	// that configuration rolls the pods.
+	ConfigHashAnnotation = "csi.truenas.io/config-hash"
+)
+
 // Service accounts
 const (
 	ControllerServiceAccount = "truenas-csi-controller-sa"

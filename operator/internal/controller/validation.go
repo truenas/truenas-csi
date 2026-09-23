@@ -58,7 +58,7 @@ func (v *Validator) ValidateCredentials(ctx context.Context, secretName string) 
 		return fmt.Errorf("%w: %s in namespace %s: %v", ErrSecretNotFound, secretName, v.namespace, err)
 	}
 
-	if _, exists := secret.Data["api-key"]; !exists {
+	if _, exists := secret.Data[CredentialsSecretKey]; !exists {
 		return fmt.Errorf("%w: %s", ErrSecretMissingKey, secretName)
 	}
 

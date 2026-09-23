@@ -17,10 +17,11 @@ spec:
         {{- with .Values.node.podLabels }}
         {{- toYaml . | nindent 8 }}
         {{- end }}
-      {{- with .Values.node.podAnnotations }}
       annotations:
+        {{- include "truenas-csi.configChecksum" . | nindent 8 }}
+        {{- with .Values.node.podAnnotations }}
         {{- toYaml . | nindent 8 }}
-      {{- end }}
+        {{- end }}
     spec:
       serviceAccountName: {{ include "truenas-csi.nodeServiceAccountName" . }}
       {{- with .Values.imagePullSecrets }}

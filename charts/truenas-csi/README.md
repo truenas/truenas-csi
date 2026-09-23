@@ -39,6 +39,16 @@ helm install truenas-csi truenas-csi/truenas-csi \
 | `truenas.iscsiIQNBase` | `""` | Base IQN for iSCSI targets. The appliance's own basename wins when they differ |
 | `truenas.insecureSkipTLS` | `false` | Skip TLS verification. Needed for the certificate TrueNAS self-signs |
 
+An upgrade that changes any of these, or `truenas.apiKey`, rolls the controller
+and node pods, since they read the settings only at startup. The chart cannot see
+inside `truenas.existingSecret`, so after rotating the key there, restart the pods
+yourself:
+
+```bash
+kubectl -n truenas-csi rollout restart deployment/truenas-csi-controller
+kubectl -n truenas-csi rollout restart daemonset/truenas-csi-node
+```
+
 ### Deployment
 
 | Key | Default | Description |
