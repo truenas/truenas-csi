@@ -11,7 +11,6 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	csiv1alpha1 "github.com/truenas/truenas-csi/operator/api/v1alpha1"
@@ -78,11 +77,7 @@ var _ = Describe("TrueNASCSI Controller", func() {
 
 		AfterEach(func() {
 			By("Cleaning up the TrueNASCSI resource")
-			resource := &csiv1alpha1.TrueNASCSI{}
-			err := k8sClient.Get(ctx, typeNamespacedName, resource)
-			if err == nil {
-				Expect(k8sClient.Delete(ctx, resource)).To(Succeed())
-			}
+			deleteTrueNASCSI(ctx, resourceName)
 		})
 
 		It("should successfully reconcile the resource", func() {
@@ -101,14 +96,14 @@ var _ = Describe("TrueNASCSI Controller", func() {
 		})
 
 		It("should set status after reconciliation", func() {
+			_, err := reconcileTrueNASCSI(ctx, resourceName)
+			Expect(err).NotTo(HaveOccurred())
+
 			By("Getting the resource after reconciliation")
-			// The previous test already reconciled, just verify status
 			resource := &csiv1alpha1.TrueNASCSI{}
-			err := k8sClient.Get(ctx, typeNamespacedName, resource)
-			if err == nil {
-				// Phase should be set (either Pending or Running depending on components)
-				Expect(resource.Status.Phase).NotTo(BeEmpty())
-			}
+			Expect(k8sClient.Get(ctx, typeNamespacedName, resource)).To(Succeed())
+			// Pending or Running, depending on whether the components are ready
+			Expect(resource.Status.Phase).NotTo(BeEmpty())
 		})
 	})
 
@@ -179,13 +174,7 @@ var _ = Describe("Workload rollouts", func() {
 		Expect(k8sClient.Create(ctx, resource)).To(Succeed())
 
 		DeferCleanup(func() {
-			// Nothing runs the finalizer here, so release it before deleting.
-			resource := &csiv1alpha1.TrueNASCSI{}
-			if err := k8sClient.Get(ctx, key, resource); err == nil {
-				controllerutil.RemoveFinalizer(resource, FinalizerName)
-				Expect(k8sClient.Update(ctx, resource)).To(Succeed())
-				Expect(client.IgnoreNotFound(k8sClient.Delete(ctx, resource))).To(Succeed())
-			}
+			deleteTrueNASCSI(ctx, resourceName)
 			Expect(client.IgnoreNotFound(k8sClient.Delete(ctx, secret))).To(Succeed())
 		})
 	})

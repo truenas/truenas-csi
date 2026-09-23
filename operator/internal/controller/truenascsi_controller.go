@@ -3,6 +3,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"maps"
 	"strings"
 
 	appsv1 "k8s.io/api/apps/v1"
@@ -79,13 +80,9 @@ func (r *TrueNASCSIReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 		return ctrl.Result{}, err
 	}
 
-	// Handle ManagementState
-	if csi.Spec.ManagementState == csiv1alpha1.ManagementStateUnmanaged {
-		log.Info("TrueNASCSI is unmanaged, skipping reconciliation")
-		return ctrl.Result{}, nil
-	}
-
-	// Handle deletion
+	// Deletion comes before the management state: a resource that became Unmanaged
+	// still carries the finalizer, and returning before releasing it would leave
+	// the resource terminating forever.
 	if csi.DeletionTimestamp != nil {
 		if controllerutil.ContainsFinalizer(csi, FinalizerName) {
 			if err := r.cleanupResources(ctx, csi); err != nil {
@@ -97,6 +94,14 @@ func (r *TrueNASCSIReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 			}
 		}
 		return ctrl.Result{}, nil
+	}
+
+	switch csi.Spec.ManagementState {
+	case csiv1alpha1.ManagementStateUnmanaged:
+		log.Info("TrueNASCSI is unmanaged, skipping reconciliation")
+		return ctrl.Result{}, nil
+	case csiv1alpha1.ManagementStateRemoved:
+		return r.reconcileRemoved(ctx, csi)
 	}
 
 	// Add finalizer if not present
@@ -164,7 +169,7 @@ func (r *TrueNASCSIReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 	}
 
 	log.V(1).Info("Reconciling CSIDriver")
-	if err := r.reconcileCSIDriver(ctx); err != nil {
+	if err := r.reconcileCSIDriver(ctx, csi); err != nil {
 		log.Error(err, "Failed to reconcile CSIDriver")
 		return r.updateStatusFailed(ctx, csi, err)
 	}
@@ -269,46 +274,61 @@ func (r *TrueNASCSIReconciler) updateStatusRunning(ctx context.Context, csi *csi
 	return ctrl.Result{RequeueAfter: RequeueAfterRunning}, nil
 }
 
+// reconcileRemoved handles managementState Removed: the CSI driver is torn down and
+// the resource kept, so switching back to Managed deploys it again. Volumes already
+// mounted stay mounted, but nothing can be provisioned, attached, mounted or
+// unmounted in the meantime.
+func (r *TrueNASCSIReconciler) reconcileRemoved(ctx context.Context, csi *csiv1alpha1.TrueNASCSI) (ctrl.Result, error) {
+	log := logf.FromContext(ctx)
+	log.Info("TrueNASCSI is removed, tearing down the CSI driver")
+
+	if err := r.cleanupResources(ctx, csi); err != nil {
+		log.Error(err, "Failed to remove the CSI driver")
+		return r.updateStatusFailed(ctx, csi, err)
+	}
+
+	csi.Status.Phase = csiv1alpha1.PhaseRemoved
+	csi.Status.ControllerReady = false
+	csi.Status.ControllerReplicas = 0
+	csi.Status.NodeDaemonSetReady = false
+	csi.Status.NodeReplicas = 0
+	csi.Status.DriverVersion = ""
+	csi.Status.ObservedGeneration = csi.Generation
+	meta.SetStatusCondition(&csi.Status.Conditions, metav1.Condition{
+		Type:    csiv1alpha1.ConditionTypeReady,
+		Status:  metav1.ConditionFalse,
+		Reason:  ReasonRemoved,
+		Message: "managementState is Removed, so the CSI driver is not deployed",
+	})
+	meta.RemoveStatusCondition(&csi.Status.Conditions, csiv1alpha1.ConditionTypeProgressing)
+	meta.RemoveStatusCondition(&csi.Status.Conditions, csiv1alpha1.ConditionTypeDegraded)
+	if err := r.Status().Update(ctx, csi); err != nil {
+		log.Error(err, "Failed to update status")
+		return ctrl.Result{}, err
+	}
+
+	// Nothing to poll for. Changing the management state reconciles again.
+	return ctrl.Result{}, nil
+}
+
+// cleanupResources deletes everything the operator deploys for csi, except the
+// namespace, which also holds the user's credentials Secret. Garbage collection
+// would remove the objects once csi is deleted, since each carries a controller
+// reference to it, but managementState Removed keeps csi, and objects created by
+// an operator that predates the references carry none.
 func (r *TrueNASCSIReconciler) cleanupResources(ctx context.Context, csi *csiv1alpha1.TrueNASCSI) error {
 	log := logf.FromContext(ctx)
 	log.Info("Cleaning up TrueNASCSI resources")
 
-	csiDriver := &storagev1.CSIDriver{
-		ObjectMeta: metav1.ObjectMeta{Name: DriverName},
-	}
-	if err := r.Delete(ctx, csiDriver); err != nil && !apierrors.IsNotFound(err) {
-		return err
-	}
-
-	for _, name := range []string{ControllerClusterRoleBindingName, NodeClusterRoleBindingName} {
-		crb := &rbacv1.ClusterRoleBinding{ObjectMeta: metav1.ObjectMeta{Name: name}}
-		if err := r.Delete(ctx, crb); err != nil && !apierrors.IsNotFound(err) {
-			return err
-		}
-	}
-
-	for _, name := range []string{ControllerClusterRoleName, NodeClusterRoleName} {
-		cr := &rbacv1.ClusterRole{ObjectMeta: metav1.ObjectMeta{Name: name}}
-		if err := r.Delete(ctx, cr); err != nil && !apierrors.IsNotFound(err) {
-			return err
-		}
-	}
-
-	for _, name := range []string{NodeSCCName, ControllerSCCName} {
-		scc := &unstructured.Unstructured{}
-		scc.SetGroupVersionKind(sccGVK)
-		scc.SetName(name)
-		if err := r.Delete(ctx, scc); err != nil && !apierrors.IsNotFound(err) && !meta.IsNoMatchError(err) {
-			return err
-		}
-	}
-
-	// The TrueNASCSI CR is cluster-scoped and its child workloads carry no owner
-	// references, so they are not garbage-collected when the CR is deleted. Remove
-	// the namespaced resources explicitly, otherwise deleting the CR leaves the CSI
-	// driver running.
 	namespace := getNamespace(csi)
-	namespaced := []client.Object{
+	objects := []client.Object{
+		&storagev1.CSIDriver{ObjectMeta: metav1.ObjectMeta{Name: DriverName}},
+		&rbacv1.ClusterRoleBinding{ObjectMeta: metav1.ObjectMeta{Name: ControllerClusterRoleBindingName}},
+		&rbacv1.ClusterRoleBinding{ObjectMeta: metav1.ObjectMeta{Name: NodeClusterRoleBindingName}},
+		&rbacv1.ClusterRole{ObjectMeta: metav1.ObjectMeta{Name: ControllerClusterRoleName}},
+		&rbacv1.ClusterRole{ObjectMeta: metav1.ObjectMeta{Name: NodeClusterRoleName}},
+		sccObject(NodeSCCName),
+		sccObject(ControllerSCCName),
 		&appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: ControllerDeploymentName, Namespace: namespace}},
 		&appsv1.DaemonSet{ObjectMeta: metav1.ObjectMeta{Name: NodeDaemonSetName, Namespace: namespace}},
 		&corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: ConfigMapName, Namespace: namespace}},
@@ -316,13 +336,46 @@ func (r *TrueNASCSIReconciler) cleanupResources(ctx context.Context, csi *csiv1a
 		&corev1.ServiceAccount{ObjectMeta: metav1.ObjectMeta{Name: ControllerServiceAccount, Namespace: namespace}},
 		&corev1.ServiceAccount{ObjectMeta: metav1.ObjectMeta{Name: NodeServiceAccount, Namespace: namespace}},
 	}
-	for _, obj := range namespaced {
-		if err := r.Delete(ctx, obj); err != nil && !apierrors.IsNotFound(err) {
+	for _, obj := range objects {
+		if err := r.deleteUnlessControlledByAnother(ctx, csi, obj); err != nil {
 			return err
 		}
 	}
 
 	return nil
+}
+
+// deleteUnlessControlledByAnother deletes obj unless something other than csi
+// controls it. The object names are fixed, so a second TrueNASCSI resource resolves
+// to the objects the first one runs; without this check, deleting or removing the
+// second would tear down the first one's driver. An object with no controller
+// reference predates the operator setting one, and is deleted.
+func (r *TrueNASCSIReconciler) deleteUnlessControlledByAnother(ctx context.Context, csi *csiv1alpha1.TrueNASCSI, obj client.Object) error {
+	if err := r.Get(ctx, client.ObjectKeyFromObject(obj), obj); err != nil {
+		if apierrors.IsNotFound(err) || meta.IsNoMatchError(err) {
+			return nil
+		}
+		return err
+	}
+
+	if owner := metav1.GetControllerOf(obj); owner != nil && owner.UID != csi.UID {
+		logf.FromContext(ctx).Info("Leaving an object another owner controls",
+			"type", fmt.Sprintf("%T", obj), "name", client.ObjectKeyFromObject(obj), "owner", owner.Kind+"/"+owner.Name)
+		return nil
+	}
+
+	if err := r.Delete(ctx, obj); err != nil && !apierrors.IsNotFound(err) {
+		return err
+	}
+	return nil
+}
+
+// setOwner makes csi the controller of obj. Deleting or editing obj then triggers
+// a reconcile that restores it, and garbage collection removes obj along with csi.
+// It fails when another owner already controls obj, which is how a second
+// TrueNASCSI resource finds out that the driver is already deployed.
+func (r *TrueNASCSIReconciler) setOwner(csi *csiv1alpha1.TrueNASCSI, obj metav1.Object) error {
+	return controllerutil.SetControllerReference(csi, obj, r.Scheme)
 }
 
 func (r *TrueNASCSIReconciler) reconcileNamespace(ctx context.Context, csi *csiv1alpha1.TrueNASCSI) error {
@@ -363,7 +416,7 @@ func (r *TrueNASCSIReconciler) reconcileNetworkPolicy(ctx context.Context, csi *
 				}},
 			}},
 		}
-		return nil
+		return r.setOwner(csi, policy)
 	})
 	return err
 }
@@ -382,7 +435,7 @@ func (r *TrueNASCSIReconciler) reconcileServiceAccounts(ctx context.Context, csi
 
 		_, err := controllerutil.CreateOrUpdate(ctx, r.Client, sa, func() error {
 			sa.Labels = ComponentLabels("")
-			return nil
+			return r.setOwner(csi, sa)
 		})
 		if err != nil {
 			return err
@@ -420,7 +473,7 @@ func (r *TrueNASCSIReconciler) reconcileRBAC(ctx context.Context, csi *csiv1alph
 			{APIGroups: []string{"coordination.k8s.io"}, Resources: []string{"leases"}, Verbs: []string{"get", "watch", "list", "delete", "update", "create"}},
 			{APIGroups: []string{""}, Resources: []string{"secrets"}, Verbs: []string{"get", "list", "watch"}},
 		}
-		return nil
+		return r.setOwner(csi, controllerRole)
 	})
 	if err != nil {
 		return err
@@ -437,7 +490,7 @@ func (r *TrueNASCSIReconciler) reconcileRBAC(ctx context.Context, csi *csiv1alph
 			{APIGroups: []string{""}, Resources: []string{"pods"}, Verbs: []string{"get", "list", "watch"}},
 			{APIGroups: []string{"storage.k8s.io"}, Resources: []string{"volumeattachments"}, Verbs: []string{"get", "list", "watch"}},
 		}
-		return nil
+		return r.setOwner(csi, nodeRole)
 	})
 	if err != nil {
 		return err
@@ -457,7 +510,7 @@ func (r *TrueNASCSIReconciler) reconcileRBAC(ctx context.Context, csi *csiv1alph
 		controllerBinding.Subjects = []rbacv1.Subject{
 			{Kind: "ServiceAccount", Name: ControllerServiceAccount, Namespace: namespace},
 		}
-		return nil
+		return r.setOwner(csi, controllerBinding)
 	})
 	if err != nil {
 		return err
@@ -477,13 +530,21 @@ func (r *TrueNASCSIReconciler) reconcileRBAC(ctx context.Context, csi *csiv1alph
 		nodeBinding.Subjects = []rbacv1.Subject{
 			{Kind: "ServiceAccount", Name: NodeServiceAccount, Namespace: namespace},
 		}
-		return nil
+		return r.setOwner(csi, nodeBinding)
 	})
 	return err
 }
 
 // sccGVK is the GroupVersionKind for OpenShift SecurityContextConstraints.
 var sccGVK = schema.GroupVersionKind{Group: "security.openshift.io", Version: "v1", Kind: "SecurityContextConstraints"}
+
+// sccObject returns an empty SecurityContextConstraints object with the given name.
+func sccObject(name string) *unstructured.Unstructured {
+	scc := &unstructured.Unstructured{}
+	scc.SetGroupVersionKind(sccGVK)
+	scc.SetName(name)
+	return scc
+}
 
 // sccDefinition describes an SCC the operator manages for one CSI workload.
 type sccDefinition struct {
@@ -550,16 +611,14 @@ func (r *TrueNASCSIReconciler) reconcileSCC(ctx context.Context, csi *csiv1alpha
 	log := logf.FromContext(ctx)
 
 	for _, def := range sccDefinitions(getNamespace(csi)) {
-		scc := &unstructured.Unstructured{}
-		scc.SetGroupVersionKind(sccGVK)
-		scc.SetName(def.name)
+		scc := sccObject(def.name)
 
 		_, err := controllerutil.CreateOrUpdate(ctx, r.Client, scc, func() error {
 			scc.SetLabels(ComponentLabels(def.component))
 			for k, v := range def.fields {
 				scc.Object[k] = v
 			}
-			return nil
+			return r.setOwner(csi, scc)
 		})
 		if err != nil {
 			if meta.IsNoMatchError(err) {
@@ -573,36 +632,36 @@ func (r *TrueNASCSIReconciler) reconcileSCC(ctx context.Context, csi *csiv1alpha
 	return nil
 }
 
-func (r *TrueNASCSIReconciler) reconcileCSIDriver(ctx context.Context) error {
-	attachRequired := true
-	podInfoOnMount := true
-	fsGroupPolicy := storagev1.FileFSGroupPolicy
-
+func (r *TrueNASCSIReconciler) reconcileCSIDriver(ctx context.Context, csi *csiv1alpha1.TrueNASCSI) error {
 	csiDriver := &storagev1.CSIDriver{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:   DriverName,
-			Labels: ComponentLabels(""),
-		},
-		Spec: storagev1.CSIDriverSpec{
-			AttachRequired: &attachRequired,
-			PodInfoOnMount: &podInfoOnMount,
-			FSGroupPolicy:  &fsGroupPolicy,
-			VolumeLifecycleModes: []storagev1.VolumeLifecycleMode{
-				storagev1.VolumeLifecyclePersistent,
-				storagev1.VolumeLifecycleEphemeral,
-			},
-		},
+		ObjectMeta: metav1.ObjectMeta{Name: DriverName},
 	}
 
-	existing := &storagev1.CSIDriver{}
-	err := r.Get(ctx, types.NamespacedName{Name: DriverName}, existing)
-	if apierrors.IsNotFound(err) {
-		return r.Create(ctx, csiDriver)
-	} else if err != nil {
-		return err
-	}
-	// CSIDriver spec is mostly immutable after creation, only ensure it exists
-	return nil
+	_, err := controllerutil.CreateOrUpdate(ctx, r.Client, csiDriver, func() error {
+		// Merged rather than replaced: cluster administrators label CSIDrivers
+		// themselves, for example to set OpenShift's ephemeral volume profile.
+		if csiDriver.Labels == nil {
+			csiDriver.Labels = map[string]string{}
+		}
+		maps.Copy(csiDriver.Labels, ComponentLabels(""))
+
+		// Only a new CSIDriver gets its spec. Several of its fields cannot be
+		// changed on the older Kubernetes versions the operator supports, so an
+		// existing one keeps what it has.
+		if csiDriver.CreationTimestamp.IsZero() {
+			csiDriver.Spec = storagev1.CSIDriverSpec{
+				AttachRequired: ptr.To(true),
+				PodInfoOnMount: ptr.To(true),
+				FSGroupPolicy:  ptr.To(storagev1.FileFSGroupPolicy),
+				VolumeLifecycleModes: []storagev1.VolumeLifecycleMode{
+					storagev1.VolumeLifecyclePersistent,
+					storagev1.VolumeLifecycleEphemeral,
+				},
+			}
+		}
+		return r.setOwner(csi, csiDriver)
+	})
+	return err
 }
 
 func (r *TrueNASCSIReconciler) reconcileConfigMap(ctx context.Context, csi *csiv1alpha1.TrueNASCSI) error {
@@ -618,7 +677,7 @@ func (r *TrueNASCSIReconciler) reconcileConfigMap(ctx context.Context, csi *csiv
 	_, err := controllerutil.CreateOrUpdate(ctx, r.Client, cm, func() error {
 		cm.Labels = ComponentLabels("")
 		cm.Data = configMapData(csi)
-		return nil
+		return r.setOwner(csi, cm)
 	})
 	return err
 }
@@ -680,7 +739,7 @@ func (r *TrueNASCSIReconciler) reconcileControllerDeployment(ctx context.Context
 				},
 			},
 		}
-		return nil
+		return r.setOwner(csi, deployment)
 	})
 	return err
 }
@@ -730,7 +789,7 @@ func (r *TrueNASCSIReconciler) reconcileNodeDaemonSet(ctx context.Context, csi *
 				},
 			},
 		}
-		return nil
+		return r.setOwner(csi, daemonset)
 	})
 	return err
 }
@@ -938,13 +997,44 @@ func (r *TrueNASCSIReconciler) buildLivenessProbeContainer() corev1.Container {
 
 // SetupWithManager sets up the controller with the Manager.
 func (r *TrueNASCSIReconciler) SetupWithManager(mgr ctrl.Manager) error {
-	return ctrl.NewControllerManagedBy(mgr).
+	// Everything the operator deploys carries a controller reference to the
+	// TrueNASCSI resource, so deleting or editing any of it reconciles at once. The
+	// reconciler reads these types through the manager's cache already, so the
+	// watches share informers that exist anyway.
+	b := ctrl.NewControllerManagedBy(mgr).
 		For(&csiv1alpha1.TrueNASCSI{}).
 		Owns(&appsv1.Deployment{}).
 		Owns(&appsv1.DaemonSet{}).
+		Owns(&corev1.ConfigMap{}).
+		Owns(&corev1.ServiceAccount{}).
+		Owns(&networkingv1.NetworkPolicy{}).
+		Owns(&rbacv1.ClusterRole{}).
+		Owns(&rbacv1.ClusterRoleBinding{}).
+		Owns(&storagev1.CSIDriver{}).
 		// The API key reaches the pods from a Secret the user manages, so a rotation
 		// has to trigger a reconcile for the new config hash to roll them.
-		Watches(&corev1.Secret{}, handler.EnqueueRequestsFromMapFunc(r.requestsForCredentialsSecret)).
-		Named("truenascsi").
-		Complete(r)
+		Watches(&corev1.Secret{}, handler.EnqueueRequestsFromMapFunc(r.requestsForCredentialsSecret))
+
+	// A watch on a kind the cluster does not serve stops the manager once its cache
+	// sync times out, so SCCs are watched only where the API exists.
+	servesSCC, err := servesKind(mgr.GetRESTMapper(), sccGVK)
+	if err != nil {
+		return err
+	}
+	if servesSCC {
+		b = b.Owns(sccObject(""))
+	}
+
+	return b.Named("truenascsi").Complete(r)
+}
+
+// servesKind reports whether the cluster serves gvk.
+func servesKind(mapper meta.RESTMapper, gvk schema.GroupVersionKind) (bool, error) {
+	if _, err := mapper.RESTMapping(gvk.GroupKind(), gvk.Version); err != nil {
+		if meta.IsNoMatchError(err) {
+			return false, nil
+		}
+		return false, fmt.Errorf("look up %s: %w", gvk.Kind, err)
+	}
+	return true, nil
 }

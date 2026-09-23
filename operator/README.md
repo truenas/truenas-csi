@@ -309,6 +309,13 @@ operator/
 8. **Controller Deployment** - Deploy CSI controller with sidecars
 9. **Node DaemonSet** - Deploy CSI node pods on all nodes
 
+Every object from step 3 on, and the OpenShift SCCs, carries a controller
+reference to the TrueNASCSI resource, and the operator watches all of them, so
+deleting or editing one reconciles immediately. The namespace is left unowned
+because it also holds the user's credentials Secret. `managementState: Unmanaged`
+skips all of the above, and `Removed` deletes those objects while keeping the
+resource.
+
 The pods read the ConfigMap and the API key through environment variables, which
 are resolved only at startup. Both pod templates carry a hash of those values in
 the `csi.truenas.io/config-hash` annotation, so a change to either rolls the pods.

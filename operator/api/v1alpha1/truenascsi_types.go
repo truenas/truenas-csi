@@ -158,6 +158,7 @@ const (
 	PhaseRunning  = "Running"
 	PhaseFailed   = "Failed"
 	PhaseUpdating = "Updating"
+	PhaseRemoved  = "Removed"
 )
 
 // Condition types for TrueNASCSI
