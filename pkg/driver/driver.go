@@ -102,13 +102,14 @@ type VolumeInfo struct {
 	NFSPath    string
 	NFSShareID int
 
-	TargetIQN        string
-	TargetPortal     string
-	LUN              int
-	ISCSITargetID    int
-	ISCSIExtentID    int
-	ISCSIAuthID      int // CHAP auth credential ID
-	ISCSIInitiatorID int // Initiator group ID
+	TargetIQN     string
+	TargetPortal  string
+	LUN           int
+	ISCSITargetID int
+	ISCSIExtentID int
+	// ISCSITargetGroups is the target's access control: the auth group tag and
+	// initiator group each portal group references.
+	ISCSITargetGroups []client.ISCSITargetGroup
 
 	// NVMe-oF resource IDs and identifiers
 	NVMeSubNQN        string // generated subsystem NQN (read back from TrueNAS)
@@ -1159,12 +1160,19 @@ func (d *Driver) reconstructVolumeFromTrueNAS(ctx context.Context, volumeID stri
 				volInfo.LUN = assoc.LunID
 				if target, err := d.client.GetISCSITargetByID(ctx, assoc.Target); err == nil && target != nil {
 					volInfo.ISCSITargetID = target.ID
+					volInfo.ISCSITargetGroups = target.Groups
 					volInfo.TargetIQN = d.ResolveISCSIIQNBase(ctx, nil) + ":" + target.Name
 					volInfo.TargetPortal = d.iscsiPortal
 					volInfo.VolumeContext[PublishContextTargetPortal] = d.iscsiPortal
 					volInfo.VolumeContext[PublishContextTargetIQN] = volInfo.TargetIQN
 					volInfo.VolumeContext[PublishContextLUN] = fmt.Sprintf("%d", volInfo.LUN)
 				}
+			} else if target, err := d.client.GetISCSITargetByName(ctx, makeISCSITargetSuffix(volumeID)); err == nil {
+				// An interrupted CreateVolume can leave the target without its
+				// association. Find it by name so deleting the volume removes it,
+				// and the auth and initiator groups it references, too.
+				volInfo.ISCSITargetID = target.ID
+				volInfo.ISCSITargetGroups = target.Groups
 			}
 			d.log.V(LogLevelDebug).Info("Reconstructed iSCSI volume", "volumeId", volumeID, "capacityBytes", volInfo.CapacityBytes,
 				"targetIQN", volInfo.TargetIQN, "lun", volInfo.LUN)

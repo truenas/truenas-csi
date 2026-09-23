@@ -228,8 +228,8 @@ squashed. Requires the workload to set a pod `securityContext.fsGroup`. See
 | `iscsi.initiators` | Allowed initiator IQNs | comma-separated |
 | `iscsi.chapUser` | CHAP username | string |
 | `iscsi.chapSecret` | CHAP password (12-16 chars) | string |
-| `iscsi.chapPeerUser` | Mutual CHAP peer user | string |
-| `iscsi.chapPeerSecret` | Mutual CHAP peer password | string |
+| `iscsi.chapPeerUser` | Mutual CHAP: the user the target authenticates as in return. Requires `iscsi.chapUser` | string |
+| `iscsi.chapPeerSecret` | Mutual CHAP peer password (12-16 chars, different from `iscsi.chapSecret`) | string |
 | `iscsi.multipathEnabled` | Enable multipath for the session (node-side); default `false` | `true`, `false` |
 | `iscsi.persistentSessions` | Keep the iSCSI session persistent (node-side); default `false` | `true`, `false` |
 
@@ -237,6 +237,11 @@ squashed. Requires the workload to set a pod `securityContext.fsGroup`. See
 > IPv6 portal addresses, so iSCSI staging fails on IPv6-only clusters — use NFS
 > there. The driver fails fast with a clear error if an IPv6 iSCSI portal is
 > configured.
+
+> **CHAP:** each volume gets its own auth group on TrueNAS, which is removed with
+> the volume. The driver never turns on discovery authentication, and nodes log in
+> without SendTargets discovery, so discovery authentication configured on the
+> appliance (Shares > iSCSI > Authorized Access) does not affect volumes.
 
 #### NVMe-oF Parameters
 

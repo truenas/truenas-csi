@@ -137,19 +137,28 @@ func (h *ISCSIHandler) buildConnector(volumeID string, config *ISCSIConfig) *isc
 		Lun:           config.LUN,
 		RetryCount:    iscsiRetryCount,
 		CheckInterval: iscsiCheckInterval,
-		DoDiscovery:   true,
+		// No SendTargets discovery: the publish context already names the target
+		// and portal, and discovery fails outright on an appliance that requires
+		// discovery authentication, which TrueNAS enables for every initiator as
+		// soon as any auth entry asks for it.
+		DoDiscovery: false,
+		// Despite the name, this is csi-lib-iscsi's only path that creates the node
+		// record, and the only one that writes session CHAP credentials to it
+		// before logging in. Discovery secrets stay empty, so nothing is written
+		// for discovery.
+		DoCHAPDiscovery: true,
 	}
 
-	// Configure CHAP authentication
 	if config.CHAPUsername != "" && config.CHAPPassword != "" {
 		connector.AuthType = iscsiAuthTypeCHAP
-		connector.DiscoverySecrets = iscsilib.Secrets{
-			UserName:   config.CHAPUsername,
-			Password:   config.CHAPPassword,
+		connector.SessionSecrets = iscsilib.Secrets{
+			SecretsType: iscsiAuthTypeCHAP,
+			UserName:    config.CHAPUsername,
+			Password:    config.CHAPPassword,
+			// Mutual CHAP: the credentials the target must present in return.
 			UserNameIn: config.CHAPUsernameIn,
 			PasswordIn: config.CHAPPasswordIn,
 		}
-		connector.SessionSecrets = connector.DiscoverySecrets
 	}
 
 	return connector
