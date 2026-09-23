@@ -117,6 +117,11 @@ func TestSanity(t *testing.T) {
 // TestSanityISCSI runs sanity tests specifically for iSCSI volumes.
 // Requires privileged access for iSCSI operations.
 func TestSanityISCSI(t *testing.T) {
+	runISCSISanity(t, map[string]string{"protocol": "iscsi"})
+}
+
+// runISCSISanity runs the sanity suite for iSCSI volumes created with parameters.
+func runISCSISanity(t *testing.T, parameters map[string]string) {
 	if os.Getenv("TRUENAS_URL") == "" {
 		t.Skip("Skipping iSCSI sanity test: TRUENAS_URL not set")
 	}
@@ -125,6 +130,8 @@ func TestSanityISCSI(t *testing.T) {
 	if os.Geteuid() != 0 {
 		t.Skip("Skipping iSCSI sanity test: requires root privileges")
 	}
+
+	withISCSIDiscoveryAuth(t)
 
 	tmpDir, err := os.MkdirTemp("", "csi-sanity-iscsi-")
 	if err != nil {
@@ -161,10 +168,7 @@ func TestSanityISCSI(t *testing.T) {
 	sanityConfig.StagingPath = stagingPath
 	sanityConfig.TestVolumeSize = 1 * 1024 * 1024 * 1024
 
-	// iSCSI parameters
-	sanityConfig.TestVolumeParameters = map[string]string{
-		"protocol": "iscsi",
-	}
+	sanityConfig.TestVolumeParameters = parameters
 
 	sanity.Test(t, sanityConfig)
 

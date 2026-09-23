@@ -28,6 +28,7 @@ const (
 const (
 	methodISCSITargetCreate       = "iscsi.target.create"
 	methodISCSITargetQuery        = "iscsi.target.query"
+	methodISCSITargetUpdate       = "iscsi.target.update"
 	methodISCSITargetDelete       = "iscsi.target.delete"
 	methodISCSIExtentCreate       = "iscsi.extent.create"
 	methodISCSIExtentQuery        = "iscsi.extent.query"
@@ -43,6 +44,14 @@ const (
 	methodISCSIInitiatorDelete    = "iscsi.initiator.delete"
 	methodISCSIPortalQuery        = "iscsi.portal.query"
 	methodISCSIGlobalConfig       = "iscsi.global.config"
+)
+
+// iSCSI authentication methods, as TrueNAS names them. A target group's
+// authmethod takes all three, and so does an auth entry's discovery_auth.
+const (
+	ISCSIAuthMethodNone       = "NONE"
+	ISCSIAuthMethodCHAP       = "CHAP"
+	ISCSIAuthMethodCHAPMutual = "CHAP_MUTUAL"
 )
 
 // TrueNAS API method names for snapshots
@@ -854,7 +863,7 @@ func (c *Client) CreateISCSITargetWithAuth(ctx context.Context, name, alias stri
 	}
 
 	if authTag > 0 {
-		group.AuthMethod = "CHAP"
+		group.AuthMethod = ISCSIAuthMethodCHAP
 		group.Auth = authTag
 	}
 
@@ -862,6 +871,13 @@ func (c *Client) CreateISCSITargetWithAuth(ctx context.Context, name, alias stri
 		group.Initiator = initiatorID
 	}
 
+	return c.CreateISCSITargetWithGroup(ctx, name, alias, group)
+}
+
+// CreateISCSITargetWithGroup creates a new iSCSI target with a single portal group,
+// which carries the target's access control: its auth method, the tag of the auth
+// group it accepts, and the initiator group it allows.
+func (c *Client) CreateISCSITargetWithGroup(ctx context.Context, name, alias string, group ISCSITargetGroup) (*ISCSITarget, error) {
 	params := &ISCSITargetCreateOptions{
 		Name:   name,
 		Alias:  alias,
@@ -875,6 +891,26 @@ func (c *Client) CreateISCSITargetWithAuth(ctx context.Context, name, alias stri
 		return nil, fmt.Errorf("failed to create iSCSI target: %w", err)
 	}
 	return &target, nil
+}
+
+// UpdateISCSITargetGroups replaces the portal groups of an iSCSI target.
+func (c *Client) UpdateISCSITargetGroups(ctx context.Context, id int, groups []ISCSITargetGroup) (*ISCSITarget, error) {
+	var target ISCSITarget
+	err := c.Call(ctx, methodISCSITargetUpdate, []any{id, map[string]any{"groups": groups}}, &target)
+	if err != nil {
+		return nil, fmt.Errorf("failed to update iSCSI target %d: %w", id, err)
+	}
+	return &target, nil
+}
+
+// ListISCSITargets returns every iSCSI target.
+func (c *Client) ListISCSITargets(ctx context.Context) ([]ISCSITarget, error) {
+	var targets []ISCSITarget
+	err := c.Call(ctx, methodISCSITargetQuery, []any{[][]any{}, &QueryOptions{}}, &targets)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query iSCSI targets: %w", err)
+	}
+	return targets, nil
 }
 
 // CreateISCSIExtent creates a new iSCSI extent backed by a disk.
@@ -1002,6 +1038,16 @@ func (c *Client) GetISCSIAuthByTag(ctx context.Context, tag int) (*ISCSIAuth, er
 	}
 
 	return &auths[0], nil
+}
+
+// ListISCSIAuthByTag returns every auth entry in the auth group with the given tag.
+func (c *Client) ListISCSIAuthByTag(ctx context.Context, tag int) ([]ISCSIAuth, error) {
+	var auths []ISCSIAuth
+	err := c.Call(ctx, methodISCSIAuthQuery, []any{[][]any{{"tag", "=", tag}}, &QueryOptions{}}, &auths)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query iSCSI auth: %w", err)
+	}
+	return auths, nil
 }
 
 // DeleteISCSIAuth deletes an iSCSI authentication credential by its ID.
