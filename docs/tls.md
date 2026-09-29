@@ -15,6 +15,10 @@ certificate TrueNAS ships with is issued for `localhost` only, so trusting it
 does not help. Replace it in TrueNAS under Credentials > Certificates with one
 issued for the address the driver uses.
 
+Behind a proxy that inspects TLS, the driver sees the proxy's certificate instead,
+signed by the proxy's CA; trust that CA the same way. See
+[Outbound Proxy](proxy.md).
+
 ## Trusting a private CA
 
 The driver reads a PEM file of CA certificates from the path in

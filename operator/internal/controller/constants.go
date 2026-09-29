@@ -56,6 +56,15 @@ const (
 	EnvCABundle = "TRUENAS_CA_BUNDLE"
 )
 
+// Outbound proxy (spec.useClusterProxy): each proxy variable and the ConfigMap key
+// it is published under, for the driver containers to read back into the variable.
+// A slice, not a map, so the containers' env keeps one order across reconciles.
+var proxyVariables = []struct{ env, key string }{
+	{"HTTP_PROXY", "httpProxy"},
+	{"HTTPS_PROXY", "httpsProxy"},
+	{"NO_PROXY", "noProxy"},
+}
+
 // Status condition reasons
 const (
 	// ReasonRemoved is the Ready condition's reason under managementState Removed.

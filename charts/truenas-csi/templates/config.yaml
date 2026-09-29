@@ -63,3 +63,12 @@ data:
   {{- if .Values.metrics.node.enabled }}
   nodeMetricsAddr: {{ printf ":%v" .Values.metrics.node.port | quote }}
   {{- end }}
+  {{- with .Values.proxy.httpProxy }}
+  httpProxy: {{ . | quote }}
+  {{- end }}
+  {{- with .Values.proxy.httpsProxy }}
+  httpsProxy: {{ . | quote }}
+  {{- end }}
+  {{- with .Values.proxy.noProxy }}
+  noProxy: {{ . | quote }}
+  {{- end }}

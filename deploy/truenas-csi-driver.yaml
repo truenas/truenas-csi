@@ -170,6 +170,12 @@ data:
   # Optional: the same for the node plugin, which runs with hostNetwork, so the
   # address it binds is a port on every node. See docs/metrics.md.
   # nodeMetricsAddr: ":8080"
+  # Optional: an outbound HTTP proxy for the connection to the TrueNAS API, for
+  # clusters whose egress has to go through one. With a proxy set, list the
+  # TrueNAS host in noProxy to keep reaching it directly. See docs/proxy.md.
+  # httpsProxy: "http://proxy.example:3128"
+  # httpProxy: "http://proxy.example:3128"
+  # noProxy: "10.0.0.0/8,.example.internal"
 
 ---
 # Controller Deployment
@@ -252,6 +258,25 @@ spec:
                 configMapKeyRef:
                   name: truenas-csi-config
                   key: metricsAddr
+                  optional: true
+            # Outbound proxy for the TrueNAS API, unset while the keys are absent
+            - name: HTTP_PROXY
+              valueFrom:
+                configMapKeyRef:
+                  name: truenas-csi-config
+                  key: httpProxy
+                  optional: true
+            - name: HTTPS_PROXY
+              valueFrom:
+                configMapKeyRef:
+                  name: truenas-csi-config
+                  key: httpsProxy
+                  optional: true
+            - name: NO_PROXY
+              valueFrom:
+                configMapKeyRef:
+                  name: truenas-csi-config
+                  key: noProxy
                   optional: true
             - name: NODE_ID
               valueFrom:
@@ -461,6 +486,25 @@ spec:
                 configMapKeyRef:
                   name: truenas-csi-config
                   key: nodeMetricsAddr
+                  optional: true
+            # Outbound proxy for the TrueNAS API, unset while the keys are absent
+            - name: HTTP_PROXY
+              valueFrom:
+                configMapKeyRef:
+                  name: truenas-csi-config
+                  key: httpProxy
+                  optional: true
+            - name: HTTPS_PROXY
+              valueFrom:
+                configMapKeyRef:
+                  name: truenas-csi-config
+                  key: httpsProxy
+                  optional: true
+            - name: NO_PROXY
+              valueFrom:
+                configMapKeyRef:
+                  name: truenas-csi-config
+                  key: noProxy
                   optional: true
             - name: NODE_ID
               valueFrom:

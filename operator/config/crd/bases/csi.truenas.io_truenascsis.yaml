@@ -193,6 +193,16 @@ spec:
                 required:
                 - name
                 type: object
+              useClusterProxy:
+                default: false
+                description: |-
+                  UseClusterProxy passes the operator's own HTTP_PROXY, HTTPS_PROXY and NO_PROXY
+                  to the CSI driver, for reaching the TrueNAS API through an outbound proxy. On
+                  OpenShift, OLM sets them on the operator from the cluster-wide Proxy. Leave it
+                  off when TrueNAS is reachable directly; with it on, list the TrueNAS host in
+                  the cluster's noProxy to keep reaching it directly. Storage traffic never goes
+                  through the proxy.
+                type: boolean
             required:
             - credentialsSecret
             - defaultPool

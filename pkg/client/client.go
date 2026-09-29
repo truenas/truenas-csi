@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -88,6 +89,10 @@ type Config struct {
 	Logger logr.Logger
 	// CallObserver is notified after every API call completes. Optional.
 	CallObserver CallObserver
+	// Proxy picks the HTTP proxy for connections to TrueNAS, as http.Transport's
+	// Proxy does. Nil means the standard HTTP_PROXY, HTTPS_PROXY and NO_PROXY
+	// environment variables.
+	Proxy func(*http.Request) (*url.URL, error)
 }
 
 // CallObserver reports a finished API call: the JSON-RPC method, how long the
@@ -262,6 +267,9 @@ func New(cfg Config) *Client {
 	if cfg.TLSConfig == nil && cfg.InsecureSkipVerify {
 		cfg.TLSConfig = &tls.Config{InsecureSkipVerify: true}
 	}
+	if cfg.Proxy == nil {
+		cfg.Proxy = http.ProxyFromEnvironment
+	}
 
 	if cfg.MaxConcurrentCalls == 0 {
 		cfg.MaxConcurrentCalls = defaultMaxConcurrentCalls
@@ -341,11 +349,12 @@ func (c *Client) dial(ctx context.Context) error {
 		defer cancel()
 	}
 
-	c.log.Info("Connecting to TrueNAS", "url", c.config.URL, "timeout", defaultDialTimeout)
+	c.log.Info("Connecting to TrueNAS", "url", c.config.URL, "proxy", c.proxyFor(c.config.URL), "timeout", defaultDialTimeout)
 
 	conn, _, err := websocket.Dial(ctx, c.config.URL, &websocket.DialOptions{
 		HTTPClient: &http.Client{
 			Transport: &http.Transport{
+				Proxy:               c.config.Proxy,
 				TLSClientConfig:     c.config.TLSConfig,
 				TLSHandshakeTimeout: defaultTLSHandshakeTimeout,
 			},
@@ -586,6 +595,27 @@ func (c *Client) reconnectLoop() {
 		delay = time.Duration(float64(delay) * c.config.ReconnectFactor)
 		delay = min(delay, c.config.ReconnectMax)
 	}
+}
+
+// proxyFor returns the proxy a connection to rawURL goes through, with any
+// credentials in it redacted, or "direct" when it goes through none.
+func (c *Client) proxyFor(rawURL string) string {
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return ""
+	}
+	// The WebSocket handshake is an HTTP request, proxied by its HTTP scheme.
+	switch u.Scheme {
+	case "wss":
+		u.Scheme = "https"
+	case "ws":
+		u.Scheme = "http"
+	}
+	proxy, err := c.config.Proxy(&http.Request{URL: u})
+	if err != nil || proxy == nil {
+		return "direct"
+	}
+	return proxy.Redacted()
 }
 
 // Connected reports whether the client has an active connection.

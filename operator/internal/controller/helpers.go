@@ -24,7 +24,7 @@ func buildTrueNASEnvVars(csi *csiv1alpha1.TrueNASCSI) []corev1.EnvVar {
 		configMapEnvVar("TRUENAS_NVMEOF_PORTAL", ConfigMapName, "nvmeofPortal", true),
 		configMapEnvVar("TRUENAS_ISCSI_IQN_BASE", ConfigMapName, "iscsiIQNBase", true),
 		configMapEnvVar("TRUENAS_INSECURE_SKIP_VERIFY", ConfigMapName, "truenasInsecure", true),
-	}, trustedCAEnvVars(csi)...)
+	}, append(proxyEnvVars(), trustedCAEnvVars(csi)...)...)
 }
 
 // fieldRefEnvVar creates an environment variable from a field reference

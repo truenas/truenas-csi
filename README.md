@@ -17,6 +17,7 @@ A Container Storage Interface (CSI) driver for [TrueNAS 25.10.0+](https://www.tr
 - **TrueNAS Websocket API** - Uses the modern TrueNAS Websocket API
 - **Prometheus metrics** - Optional `/metrics` endpoint for CSI operations and TrueNAS API health ([docs](docs/metrics.md))
 - **Private CA trust** - Verify a TrueNAS certificate issued by your own CA ([docs](docs/tls.md))
+- **Outbound proxy** - Reach the TrueNAS API through an HTTP proxy ([docs](docs/proxy.md))
 
 ## Requirements
 
@@ -170,6 +171,7 @@ With Helm they are set through values instead; see the
 | `iscsiIQNBase` | Base IQN for iSCSI targets | `iqn.2024-01.com.example` |
 | `metricsAddr` | Prometheus metrics address for the controller (optional; disabled when absent) | `:8080` |
 | `nodeMetricsAddr` | Prometheus metrics address for the node plugin, which uses hostNetwork (optional) | `:8080` |
+| `httpsProxy`, `httpProxy`, `noProxy` | Outbound proxy for the TrueNAS API (optional); see [Outbound Proxy](docs/proxy.md) | `http://proxy.example:3128` |
 
 The pods read these settings, and the API key from the Secret, only when they
 start. After editing either one, restart both workloads to apply the change:

@@ -68,6 +68,17 @@ type TrueNASCSISpec struct {
 	// +operator-sdk:csv:customresourcedefinitions:type=spec,displayName="Trusted CA"
 	TrustedCA *ConfigMapKeyReference `json:"trustedCA,omitempty"`
 
+	// UseClusterProxy passes the operator's own HTTP_PROXY, HTTPS_PROXY and NO_PROXY
+	// to the CSI driver, for reaching the TrueNAS API through an outbound proxy. On
+	// OpenShift, OLM sets them on the operator from the cluster-wide Proxy. Leave it
+	// off when TrueNAS is reachable directly; with it on, list the TrueNAS host in
+	// the cluster's noProxy to keep reaching it directly. Storage traffic never goes
+	// through the proxy.
+	// +optional
+	// +kubebuilder:default=false
+	// +operator-sdk:csv:customresourcedefinitions:type=spec,displayName="Use Cluster Proxy",xDescriptors="urn:alm:descriptor:com.tectonic.ui:booleanSwitch"
+	UseClusterProxy bool `json:"useClusterProxy,omitempty"`
+
 	// Deployment Options
 
 	// DriverImage is the container image for the TrueNAS CSI driver

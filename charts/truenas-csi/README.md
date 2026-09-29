@@ -57,6 +57,17 @@ kubectl -n truenas-csi rollout restart deployment/truenas-csi-controller
 kubectl -n truenas-csi rollout restart daemonset/truenas-csi-node
 ```
 
+### Outbound proxy
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `proxy.httpsProxy` | `""` | Proxy for a `wss://` TrueNAS URL. Empty connects directly |
+| `proxy.httpProxy` | `""` | Proxy for a `ws://` TrueNAS URL |
+| `proxy.noProxy` | `""` | Hosts, domains and CIDRs to reach without the proxy, comma-separated |
+
+Only the driver's connection to the TrueNAS API uses the proxy; storage traffic
+never does. See [Outbound Proxy](../../docs/proxy.md).
+
 ### Deployment
 
 | Key | Default | Description |
