@@ -36,6 +36,16 @@ truenas:
   # Key inside existingSecret that holds the API key.
   existingSecretKey: api-key
 
+# Outbound HTTP proxy for the driver's connection to the TrueNAS API, for clusters
+# whose egress has to go through one. Empty connects directly. With a proxy set,
+# list the TrueNAS host in noProxy to keep reaching it directly. Storage traffic
+# (NFS, iSCSI, NVMe-oF) never goes through the proxy.
+proxy:
+  httpsProxy: ""
+  httpProxy: ""
+  # Hosts, domains and CIDRs to reach without the proxy, comma-separated.
+  noProxy: ""
+
 # CSI driver name. Change it, along with fullnameOverride, to run more than one
 # instance in a cluster against different appliances. It is part of the kubelet
 # socket path, so it must match the CSIDriver object, which this chart keeps in

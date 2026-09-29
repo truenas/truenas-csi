@@ -84,7 +84,7 @@ func TestFetchSupportedAPIVersions(t *testing.T) {
 	want := []string{"v25.04.0", "v25.04.1", "v25.04.2", "v25.10.0"}
 	_, wsURL := newVersionsServer(t, want, http.StatusOK)
 
-	got, err := fetchSupportedAPIVersions(context.Background(), wsURL, nil)
+	got, err := fetchSupportedAPIVersions(context.Background(), wsURL, nil, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -95,7 +95,7 @@ func TestFetchSupportedAPIVersions(t *testing.T) {
 
 func TestFetchSupportedAPIVersions_HTTPError(t *testing.T) {
 	_, wsURL := newVersionsServer(t, nil, http.StatusInternalServerError)
-	if _, err := fetchSupportedAPIVersions(context.Background(), wsURL, nil); err == nil {
+	if _, err := fetchSupportedAPIVersions(context.Background(), wsURL, nil, nil); err == nil {
 		t.Fatal("expected error on HTTP 500")
 	}
 }

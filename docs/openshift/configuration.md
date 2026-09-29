@@ -65,6 +65,7 @@ spec:
 | `iscsiIQNBase` | string | No | `iqn.2005-10.org.freenas.ctl` | Base IQN for targets |
 | `insecureSkipTLS` | bool | No | `false` | Skip TLS verification |
 | `trustedCA` | object | No | - | ConfigMap `name` and `key` (default `ca-bundle.crt`) holding CA certificates to trust; see [TLS Configuration](#tls-configuration) |
+| `useClusterProxy` | bool | No | `false` | Reach the TrueNAS API through the cluster-wide proxy; see [Outbound Proxy](../proxy.md) |
 | `driverImage` | string | No | Operator default | Custom driver image |
 | `controllerReplicas` | int32 | No | `1` | Controller pod replicas |
 | `nodeSelector` | map | No | - | Node selector labels |

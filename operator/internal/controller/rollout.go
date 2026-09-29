@@ -34,7 +34,7 @@ func (r *TrueNASCSIReconciler) workloadConfigHash(ctx context.Context, csi *csiv
 	if err != nil {
 		return "", err
 	}
-	return hashWorkloadConfig(configMapData(csi), secret.Data[CredentialsSecretKey], caBundle), nil
+	return hashWorkloadConfig(r.desiredConfigMapData(csi), secret.Data[CredentialsSecretKey], caBundle), nil
 }
 
 // hashWorkloadConfig fingerprints the ConfigMap data, API key and trusted CA

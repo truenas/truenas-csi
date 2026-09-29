@@ -34,6 +34,10 @@ import (
 type TrueNASCSIReconciler struct {
 	client.Client
 	Scheme *runtime.Scheme
+
+	// Getenv reads the operator's own environment, where OLM puts the cluster's
+	// proxy settings. Nil means os.Getenv.
+	Getenv func(string) string
 }
 
 // +kubebuilder:rbac:groups=csi.truenas.io,resources=truenascsis,verbs=get;list;watch;create;update;patch;delete
@@ -676,7 +680,7 @@ func (r *TrueNASCSIReconciler) reconcileConfigMap(ctx context.Context, csi *csiv
 
 	_, err := controllerutil.CreateOrUpdate(ctx, r.Client, cm, func() error {
 		cm.Labels = ComponentLabels("")
-		cm.Data = configMapData(csi)
+		cm.Data = r.desiredConfigMapData(csi)
 		return r.setOwner(csi, cm)
 	})
 	return err

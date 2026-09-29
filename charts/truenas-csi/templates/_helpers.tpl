@@ -193,6 +193,24 @@ use separate keys.
       name: {{ include "truenas-csi.configMapName" $ctx }}
       key: {{ .metricsKey }}
       optional: true
+- name: HTTP_PROXY
+  valueFrom:
+    configMapKeyRef:
+      name: {{ include "truenas-csi.configMapName" $ctx }}
+      key: httpProxy
+      optional: true
+- name: HTTPS_PROXY
+  valueFrom:
+    configMapKeyRef:
+      name: {{ include "truenas-csi.configMapName" $ctx }}
+      key: httpsProxy
+      optional: true
+- name: NO_PROXY
+  valueFrom:
+    configMapKeyRef:
+      name: {{ include "truenas-csi.configMapName" $ctx }}
+      key: noProxy
+      optional: true
 {{- if ne $ctx.Values.driverName "csi.truenas.io" }}
 - name: CSI_DRIVER_NAME
   value: {{ $ctx.Values.driverName | quote }}
