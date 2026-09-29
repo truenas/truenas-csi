@@ -16,6 +16,7 @@ A Container Storage Interface (CSI) driver for [TrueNAS 25.10.0+](https://www.tr
 - **Automatic snapshot scheduling** - Periodic snapshots via StorageClass
 - **TrueNAS Websocket API** - Uses the modern TrueNAS Websocket API
 - **Prometheus metrics** - Optional `/metrics` endpoint for CSI operations and TrueNAS API health ([docs](docs/metrics.md))
+- **Private CA trust** - Verify a TrueNAS certificate issued by your own CA ([docs](docs/tls.md))
 
 ## Requirements
 
@@ -180,6 +181,9 @@ kubectl -n truenas-csi rollout restart daemonset/truenas-csi-node
 
 The Helm chart and the OpenShift operator do this for you: changing a setting or
 the API key rolls the pods.
+
+For a TrueNAS certificate issued by a private CA, see
+[TLS and Private CAs](docs/tls.md) rather than setting `truenasInsecure`.
 
 ### StorageClass Parameters
 

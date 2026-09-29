@@ -40,3 +40,18 @@ func TestLoadEnvConfig_MetricsAddr(t *testing.T) {
 		})
 	}
 }
+
+func TestLoadEnvConfig_CABundle(t *testing.T) {
+	t.Setenv("TRUENAS_URL", "wss://truenas.example")
+	t.Setenv("TRUENAS_API_KEY", "key")
+	t.Setenv("TRUENAS_DEFAULT_POOL", "tank")
+	t.Setenv(envCABundle, "/etc/truenas-csi/trusted-ca/ca-bundle.crt")
+
+	config := &driver.DriverConfig{}
+	if err := loadEnvConfig(config); err != nil {
+		t.Fatalf("loadEnvConfig() = %v, want nil", err)
+	}
+	if config.TrueNASCABundle != "/etc/truenas-csi/trusted-ca/ca-bundle.crt" {
+		t.Errorf("TrueNASCABundle = %q, want the path from %s", config.TrueNASCABundle, envCABundle)
+	}
+}

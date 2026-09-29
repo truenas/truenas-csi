@@ -94,6 +94,7 @@ spec:
             - name: host-root
               mountPath: /host
               mountPropagation: Bidirectional
+            {{- include "truenas-csi.caBundleVolumeMount" . | nindent 12 }}
           resources:
             {{- toYaml .Values.node.resources | nindent 12 }}
           livenessProbe:
@@ -176,3 +177,4 @@ spec:
           hostPath:
             path: /
             type: Directory
+        {{- include "truenas-csi.caBundleVolume" . | nindent 8 }}

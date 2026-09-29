@@ -37,6 +37,25 @@ const (
 	ConfigHashAnnotation = "csi.truenas.io/config-hash"
 )
 
+// Trusted CA bundle (spec.trustedCA)
+const (
+	// VolumeTrustedCA carries the bundle into the driver containers.
+	VolumeTrustedCA = "trusted-ca"
+
+	// TrustedCAMountDir is where the bundle is mounted: a directory of the driver's
+	// own, so the bundle adds to the image's CA store instead of replacing it,
+	// whichever image is running.
+	TrustedCAMountDir = "/etc/truenas-csi/trusted-ca"
+	TrustedCAFileName = "ca-bundle.crt"
+
+	// DefaultTrustedCAKey is the ConfigMap key read when spec.trustedCA names none,
+	// which is also where OpenShift injects the cluster's trusted CA bundle.
+	DefaultTrustedCAKey = "ca-bundle.crt"
+
+	// EnvCABundle points the driver at the mounted bundle.
+	EnvCABundle = "TRUENAS_CA_BUNDLE"
+)
+
 // Status condition reasons
 const (
 	// ReasonRemoved is the Ready condition's reason under managementState Removed.

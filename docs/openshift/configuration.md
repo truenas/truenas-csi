@@ -64,6 +64,7 @@ spec:
 | `iscsiPortal` | string | No | - | iSCSI portal (IP:port) |
 | `iscsiIQNBase` | string | No | `iqn.2005-10.org.freenas.ctl` | Base IQN for targets |
 | `insecureSkipTLS` | bool | No | `false` | Skip TLS verification |
+| `trustedCA` | object | No | - | ConfigMap `name` and `key` (default `ca-bundle.crt`) holding CA certificates to trust; see [TLS Configuration](#tls-configuration) |
 | `driverImage` | string | No | Operator default | Custom driver image |
 | `controllerReplicas` | int32 | No | `1` | Controller pod replicas |
 | `nodeSelector` | map | No | - | Node selector labels |
@@ -258,8 +259,16 @@ Ensure the following connectivity between OpenShift nodes and TrueNAS:
 
 For production environments, use valid TLS certificates:
 
-1. **TrueNAS with valid certificate**: Set `insecureSkipTLS: false`
-2. **TrueNAS with self-signed certificate**: Set `insecureSkipTLS: true` (not recommended for production)
+1. **TrueNAS with a certificate from a public CA**: Set `insecureSkipTLS: false`
+2. **TrueNAS with a certificate from a private CA**: Set `insecureSkipTLS: false`
+   and point `trustedCA` at a ConfigMap holding that CA, as below
+3. **TrueNAS with its self-signed certificate**: Set `insecureSkipTLS: true` (not recommended for production)
+
+The certificate must be issued for the host in `truenasURL`, whatever CA signed
+it. To trust every CA the cluster trusts, point `trustedCA` at a ConfigMap
+labeled `config.openshift.io/inject-trusted-cabundle: "true"`, which OpenShift
+fills for you. See [TLS and Private CAs](../tls.md) for the details and for what
+a certificate error at startup means.
 
 ## Resource Tuning
 

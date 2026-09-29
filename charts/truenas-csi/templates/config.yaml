@@ -24,6 +24,19 @@ type: Opaque
 stringData:
   {{ include "truenas-csi.secretKey" . }}: {{ required "Set truenas.apiKey, or truenas.existingSecret to use a Secret you manage" .Values.truenas.apiKey | quote }}
 {{- end }}
+{{- if .Values.truenas.caBundle }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "truenas-csi.caBundleConfigMapName" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "truenas-csi.labels" . | nindent 4 }}
+data:
+  ca-bundle.crt: |
+    {{- .Values.truenas.caBundle | nindent 4 }}
+{{- end }}
 ---
 apiVersion: v1
 kind: ConfigMap

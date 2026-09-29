@@ -64,6 +64,7 @@ spec:
           volumeMounts:
             - name: socket-dir
               mountPath: /csi
+            {{- include "truenas-csi.caBundleVolumeMount" . | nindent 12 }}
           resources:
             {{- toYaml .Values.controller.resources | nindent 12 }}
           livenessProbe:
@@ -176,3 +177,4 @@ spec:
       volumes:
         - name: socket-dir
           emptyDir: {}
+        {{- include "truenas-csi.caBundleVolume" . | nindent 8 }}
