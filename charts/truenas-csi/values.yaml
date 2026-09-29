@@ -13,9 +13,19 @@ truenas:
   # Base IQN for iSCSI targets. The appliance's own basename wins when it differs.
   iscsiIQNBase: ""
   # Skip TLS verification. Needed for the self-signed certificate TrueNAS ships
-  # with; leaving it false against a self-signed certificate leaves the pods
-  # un-Ready with no obvious error.
+  # with; leaving it false against that certificate stops the driver at startup
+  # with a certificate error.
   insecureSkipTLS: false
+
+  # PEM CA certificates to trust for the TrueNAS API in addition to the image's
+  # public CAs, for a TrueNAS certificate issued by a private CA. The chart puts
+  # them in a ConfigMap. The certificate must also be issued for the host in url.
+  caBundle: ""
+  # Name of a ConfigMap you manage instead, for example one OpenShift fills with
+  # the cluster's trusted CAs when labeled config.openshift.io/inject-trusted-cabundle=true.
+  existingCABundleConfigMap: ""
+  # Key inside existingCABundleConfigMap that holds the certificates.
+  existingCABundleKey: ca-bundle.crt
 
   # API key. Used only when existingSecret is empty, in which case the chart
   # creates the Secret itself.

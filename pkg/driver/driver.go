@@ -2,6 +2,7 @@ package driver
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"net/url"
@@ -24,6 +25,14 @@ import (
 
 // DRIVER_VERSION is set at build time via ldflags.
 var DRIVER_VERSION = "dev"
+
+// certificateVerificationHint follows a failed TLS verification of the TrueNAS
+// certificate, naming the setting for each way the driver is deployed.
+const certificateVerificationHint = "The driver does not trust the TrueNAS TLS certificate. Either trust the CA " +
+	"that issued it (TRUENAS_CA_BUNDLE, trustedCA on the TrueNASCSI resource, or truenas.caBundle in the Helm " +
+	"chart) and make sure the certificate is issued for the host in the TrueNAS URL, or, for the self-signed " +
+	"certificate TrueNAS ships with, turn verification off (TRUENAS_INSECURE_SKIP_VERIFY, insecureSkipTLS, or " +
+	"truenas.insecureSkipTLS)."
 
 const (
 	DRIVER_NAME = "csi.truenas.io"
@@ -278,6 +287,9 @@ type DriverConfig struct {
 	TrueNASURL      string
 	TrueNASAPIKey   string
 	TrueNASInsecure bool
+	// TrueNASCABundle is a PEM file of CA certificates to trust for the TrueNAS
+	// API in addition to the system's, for a certificate from a private CA.
+	TrueNASCABundle string
 
 	DefaultPool  string
 	NFSServer    string
@@ -372,16 +384,30 @@ func NewDriver(config *DriverConfig) (*Driver, error) {
 	// Built before the client so API calls are observed from the first one.
 	metrics := NewMetrics()
 
+	tlsConfig, err := client.NewTLSConfig(config.TrueNASInsecure, config.TrueNASCABundle)
+	if err != nil {
+		return nil, fmt.Errorf("invalid TrueNAS CA bundle: %w", err)
+	}
+	switch {
+	case config.TrueNASInsecure && config.TrueNASCABundle != "":
+		log.Info("TLS verification is disabled, so the CA bundle is not used", "caBundle", config.TrueNASCABundle)
+	case config.TrueNASCABundle != "":
+		log.V(LogLevelInfo).Info("Trusting the CA certificates in the CA bundle for TrueNAS", "caBundle", config.TrueNASCABundle)
+	}
+
 	cfg := client.Config{
-		URL:                config.TrueNASURL,
-		APIKey:             config.TrueNASAPIKey,
-		InsecureSkipVerify: config.TrueNASInsecure,
-		Logger:             config.Logger,
-		CallObserver:       metrics.RecordAPICall,
+		URL:          config.TrueNASURL,
+		APIKey:       config.TrueNASAPIKey,
+		TLSConfig:    tlsConfig,
+		Logger:       config.Logger,
+		CallObserver: metrics.RecordAPICall,
 	}
 
 	truenasClient := client.New(cfg)
 	if err := truenasClient.Connect(ctx); err != nil {
+		if errors.Is(err, client.ErrCertificateVerification) {
+			return nil, fmt.Errorf("failed to connect to TrueNAS: %w\n\n%s", err, certificateVerificationHint)
+		}
 		return nil, fmt.Errorf("failed to connect to TrueNAS: %w", err)
 	}
 

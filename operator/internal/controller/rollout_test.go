@@ -34,9 +34,9 @@ func rolloutTestCR() *csiv1alpha1.TrueNASCSI {
 func TestHashWorkloadConfigFollowsEveryConfigMapKey(t *testing.T) {
 	apiKey := []byte("1-abcdef")
 	base := configMapData(rolloutTestCR())
-	baseHash := hashWorkloadConfig(base, apiKey)
+	baseHash := hashWorkloadConfig(base, apiKey, nil)
 
-	if again := hashWorkloadConfig(configMapData(rolloutTestCR()), apiKey); again != baseHash {
+	if again := hashWorkloadConfig(configMapData(rolloutTestCR()), apiKey, nil); again != baseHash {
 		t.Fatalf("hash of an unchanged configuration moved: %s then %s", baseHash, again)
 	}
 
@@ -44,7 +44,7 @@ func TestHashWorkloadConfigFollowsEveryConfigMapKey(t *testing.T) {
 		t.Run(key, func(t *testing.T) {
 			changed := maps.Clone(base)
 			changed[key] += "-changed"
-			if hashWorkloadConfig(changed, apiKey) == baseHash {
+			if hashWorkloadConfig(changed, apiKey, nil) == baseHash {
 				t.Errorf("changing %q did not change the hash", key)
 			}
 		})
@@ -53,7 +53,7 @@ func TestHashWorkloadConfigFollowsEveryConfigMapKey(t *testing.T) {
 
 func TestHashWorkloadConfigFollowsAPIKey(t *testing.T) {
 	config := configMapData(rolloutTestCR())
-	if hashWorkloadConfig(config, []byte("1-old")) == hashWorkloadConfig(config, []byte("1-new")) {
+	if hashWorkloadConfig(config, []byte("1-old"), nil) == hashWorkloadConfig(config, []byte("1-new"), nil) {
 		t.Error("rotating the API key did not change the hash")
 	}
 }
@@ -63,7 +63,7 @@ func TestHashWorkloadConfigFollowsAPIKey(t *testing.T) {
 func TestHashWorkloadConfigSeparatesValues(t *testing.T) {
 	a := map[string]string{"iscsiPortal": "x\nnfsServer=y", "nfsServer": "z"}
 	b := map[string]string{"iscsiPortal": "x", "nfsServer": "y\nnfsServer=z"}
-	if hashWorkloadConfig(a, nil) == hashWorkloadConfig(b, nil) {
+	if hashWorkloadConfig(a, nil, nil) == hashWorkloadConfig(b, nil, nil) {
 		t.Error("two different configurations hashed the same")
 	}
 }
@@ -145,6 +145,62 @@ func TestRequestsForCredentialsSecret(t *testing.T) {
 			for i := range want {
 				if got[i] != want[i] {
 					t.Errorf("requests = %v, want %v", got, want)
+				}
+			}
+		})
+	}
+}
+
+// The driver reads the trusted CA bundle only at startup, so a new bundle has to
+// roll the pods like any other setting.
+func TestHashWorkloadConfigFollowsCABundle(t *testing.T) {
+	config := configMapData(rolloutTestCR())
+	apiKey := []byte("1-abcdef")
+	without := hashWorkloadConfig(config, apiKey, nil)
+	first := hashWorkloadConfig(config, apiKey, []byte("-----BEGIN CERTIFICATE-----\nfirst"))
+	second := hashWorkloadConfig(config, apiKey, []byte("-----BEGIN CERTIFICATE-----\nsecond"))
+
+	if first == without || second == without || first == second {
+		t.Errorf("hashes without a bundle, with one and with another: %s, %s, %s; want all different", without, first, second)
+	}
+}
+
+func TestRequestsForTrustedCA(t *testing.T) {
+	scheme := runtime.NewScheme()
+	if err := csiv1alpha1.AddToScheme(scheme); err != nil {
+		t.Fatalf("failed to build scheme: %v", err)
+	}
+
+	trusting := rolloutTestCR()
+	trusting.Name = "trusting"
+	trusting.Spec.TrustedCA = &csiv1alpha1.ConfigMapKeyReference{Name: "trusted-cabundle"}
+
+	plain := rolloutTestCR()
+	plain.Name = "plain"
+
+	r := &TrueNASCSIReconciler{
+		Client: fake.NewClientBuilder().WithScheme(scheme).WithObjects(trusting, plain).Build(),
+		Scheme: scheme,
+	}
+
+	tests := []struct {
+		name, namespace, configMap string
+		want                       []string
+	}{
+		{"the trusted CA ConfigMap", CSINamespace, "trusted-cabundle", []string{"trusting"}},
+		{"an unrelated ConfigMap", CSINamespace, ConfigMapName, nil},
+		{"same name in another namespace", "elsewhere", "trusted-cabundle", nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cm := &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: tt.configMap, Namespace: tt.namespace}}
+			got := r.requestsForTrustedCA(context.Background(), cm)
+			if len(got) != len(tt.want) {
+				t.Fatalf("requests = %v, want %v", got, tt.want)
+			}
+			for i, name := range tt.want {
+				if got[i].Name != name {
+					t.Errorf("requests = %v, want %v", got, tt.want)
 				}
 			}
 		})

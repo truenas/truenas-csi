@@ -51,14 +51,24 @@ type MockTrueNASServer struct {
 
 // NewMockTrueNASServer creates a new mock TrueNAS WebSocket server.
 func NewMockTrueNASServer() *MockTrueNASServer {
+	return newMockTrueNASServer(httptest.NewServer)
+}
+
+// NewMockTrueNASTLSServer creates the mock server behind TLS, with httptest's
+// self-signed certificate, which is valid for 127.0.0.1 and example.com only.
+func NewMockTrueNASTLSServer() *MockTrueNASServer {
+	return newMockTrueNASServer(httptest.NewTLSServer)
+}
+
+func newMockTrueNASServer(start func(http.Handler) *httptest.Server) *MockTrueNASServer {
 	m := &MockTrueNASServer{
 		responses: make(map[string]MockResponse),
 		apiKey:    "test-api-key",
 	}
 
-	server := httptest.NewServer(http.HandlerFunc(m.handleWebSocket))
+	server := start(http.HandlerFunc(m.handleWebSocket))
 	m.Server = server
-	// Convert http:// to ws://
+	// Convert http:// to ws://, and https:// to wss://
 	m.URL = "ws" + strings.TrimPrefix(server.URL, "http")
 
 	return m

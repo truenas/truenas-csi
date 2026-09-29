@@ -76,6 +76,53 @@ truenas-api-credentials
 {{- end -}}
 {{- end -}}
 
+{{/*
+CA certificates the driver trusts for the TrueNAS API in addition to the image's:
+from truenas.caBundle, in a ConfigMap this chart creates, or from a ConfigMap the
+user manages. Mounted at a path of the driver's own, so the image's CA store stays.
+*/}}
+{{- define "truenas-csi.caBundleEnabled" -}}
+{{- if and .Values.truenas.caBundle .Values.truenas.existingCABundleConfigMap -}}
+{{- fail "Set truenas.caBundle or truenas.existingCABundleConfigMap, not both" -}}
+{{- end -}}
+{{- if or .Values.truenas.caBundle .Values.truenas.existingCABundleConfigMap -}}true{{- end -}}
+{{- end -}}
+
+{{- define "truenas-csi.caBundleConfigMapName" -}}
+{{- if .Values.truenas.existingCABundleConfigMap -}}
+{{ .Values.truenas.existingCABundleConfigMap }}
+{{- else -}}
+{{ include "truenas-csi.fullname" . }}-trusted-ca
+{{- end -}}
+{{- end -}}
+
+{{- define "truenas-csi.caBundleKey" -}}
+{{- if .Values.truenas.existingCABundleConfigMap -}}
+{{- default "ca-bundle.crt" .Values.truenas.existingCABundleKey -}}
+{{- else -}}
+ca-bundle.crt
+{{- end -}}
+{{- end -}}
+
+{{- define "truenas-csi.caBundleVolumeMount" -}}
+{{- if include "truenas-csi.caBundleEnabled" . }}
+- name: trusted-ca
+  mountPath: /etc/truenas-csi/trusted-ca
+  readOnly: true
+{{- end -}}
+{{- end -}}
+
+{{- define "truenas-csi.caBundleVolume" -}}
+{{- if include "truenas-csi.caBundleEnabled" . }}
+- name: trusted-ca
+  configMap:
+    name: {{ include "truenas-csi.caBundleConfigMapName" . }}
+    items:
+      - key: {{ include "truenas-csi.caBundleKey" . }}
+        path: ca-bundle.crt
+{{- end -}}
+{{- end -}}
+
 {{- define "truenas-csi.secretKey" -}}
 {{- default "api-key" .Values.truenas.existingSecretKey -}}
 {{- end -}}
@@ -149,6 +196,10 @@ use separate keys.
 {{- if ne $ctx.Values.driverName "csi.truenas.io" }}
 - name: CSI_DRIVER_NAME
   value: {{ $ctx.Values.driverName | quote }}
+{{- end }}
+{{- if include "truenas-csi.caBundleEnabled" $ctx }}
+- name: TRUENAS_CA_BUNDLE
+  value: /etc/truenas-csi/trusted-ca/ca-bundle.crt
 {{- end }}
 - name: NODE_ID
   valueFrom:

@@ -735,7 +735,7 @@ func (r *TrueNASCSIReconciler) reconcileControllerDeployment(ctx context.Context
 						r.buildResizerSidecar(),
 						r.buildLivenessProbeContainer(),
 					},
-					Volumes: buildControllerVolumes(),
+					Volumes: append(buildControllerVolumes(), trustedCAVolumes(csi)...),
 				},
 			},
 		}
@@ -785,7 +785,7 @@ func (r *TrueNASCSIReconciler) reconcileNodeDaemonSet(ctx context.Context, csi *
 						r.buildNodeDriverRegistrarSidecar(),
 						r.buildLivenessProbeContainer(),
 					},
-					Volumes: buildNodeVolumes(),
+					Volumes: append(buildNodeVolumes(), trustedCAVolumes(csi)...),
 				},
 			},
 		}
@@ -810,7 +810,7 @@ func (r *TrueNASCSIReconciler) buildControllerContainer(image string, logLevel i
 			fmt.Sprintf("--v=%d", logLevel),
 		},
 		Env:          buildTrueNASEnvVars(csi),
-		VolumeMounts: []corev1.VolumeMount{socketDirVolumeMount()},
+		VolumeMounts: append([]corev1.VolumeMount{socketDirVolumeMount()}, trustedCAVolumeMounts(csi)...),
 		LivenessProbe: &corev1.Probe{
 			ProbeHandler: corev1.ProbeHandler{
 				HTTPGet: &corev1.HTTPGetAction{
@@ -885,7 +885,7 @@ func (r *TrueNASCSIReconciler) buildNodeContainer(image string, logLevel int32, 
 				},
 			},
 		},
-		VolumeMounts: buildNodeVolumeMounts(),
+		VolumeMounts: append(buildNodeVolumeMounts(), trustedCAVolumeMounts(csi)...),
 		LivenessProbe: &corev1.Probe{
 			ProbeHandler: corev1.ProbeHandler{
 				HTTPGet: &corev1.HTTPGetAction{
@@ -1011,9 +1011,11 @@ func (r *TrueNASCSIReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Owns(&rbacv1.ClusterRole{}).
 		Owns(&rbacv1.ClusterRoleBinding{}).
 		Owns(&storagev1.CSIDriver{}).
-		// The API key reaches the pods from a Secret the user manages, so a rotation
-		// has to trigger a reconcile for the new config hash to roll them.
-		Watches(&corev1.Secret{}, handler.EnqueueRequestsFromMapFunc(r.requestsForCredentialsSecret))
+		// The API key and the trusted CA bundle reach the pods from a Secret and a
+		// ConfigMap the user manages, so a change to either has to trigger a
+		// reconcile for the new config hash to roll them.
+		Watches(&corev1.Secret{}, handler.EnqueueRequestsFromMapFunc(r.requestsForCredentialsSecret)).
+		Watches(&corev1.ConfigMap{}, handler.EnqueueRequestsFromMapFunc(r.requestsForTrustedCA))
 
 	// A watch on a kind the cluster does not serve stops the manager once its cache
 	// sync times out, so SCCs are watched only where the API exists.

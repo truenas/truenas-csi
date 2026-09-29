@@ -59,6 +59,15 @@ type TrueNASCSISpec struct {
 	// +operator-sdk:csv:customresourcedefinitions:type=spec,displayName="Skip TLS Verification",xDescriptors="urn:alm:descriptor:com.tectonic.ui:booleanSwitch"
 	InsecureSkipTLS bool `json:"insecureSkipTLS,omitempty"`
 
+	// TrustedCA names a ConfigMap in the driver namespace holding PEM CA certificates
+	// to trust for the TrueNAS API, in addition to the image's public CAs. Use it when
+	// the TrueNAS certificate is issued by a private CA. On OpenShift, a ConfigMap
+	// labeled config.openshift.io/inject-trusted-cabundle=true is filled with the
+	// cluster's trusted CA bundle under the key ca-bundle.crt.
+	// +optional
+	// +operator-sdk:csv:customresourcedefinitions:type=spec,displayName="Trusted CA"
+	TrustedCA *ConfigMapKeyReference `json:"trustedCA,omitempty"`
+
 	// Deployment Options
 
 	// DriverImage is the container image for the TrueNAS CSI driver
@@ -108,6 +117,20 @@ type TrueNASCSISpec struct {
 	// +kubebuilder:default="truenas-csi"
 	// +operator-sdk:csv:customresourcedefinitions:type=spec,displayName="Namespace",xDescriptors="urn:alm:descriptor:com.tectonic.ui:text"
 	Namespace string `json:"namespace,omitempty"`
+}
+
+// ConfigMapKeyReference selects a key of a ConfigMap in the driver namespace.
+type ConfigMapKeyReference struct {
+	// Name of the ConfigMap
+	// +kubebuilder:validation:MinLength=1
+	// +operator-sdk:csv:customresourcedefinitions:type=spec,displayName="ConfigMap",xDescriptors="urn:alm:descriptor:io.kubernetes:ConfigMap"
+	Name string `json:"name"`
+
+	// Key holding the PEM certificates
+	// +optional
+	// +kubebuilder:default="ca-bundle.crt"
+	// +operator-sdk:csv:customresourcedefinitions:type=spec,displayName="Key",xDescriptors="urn:alm:descriptor:com.tectonic.ui:text"
+	Key string `json:"key,omitempty"`
 }
 
 // TrueNASCSIStatus defines the observed state of TrueNASCSI.

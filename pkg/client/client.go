@@ -307,6 +307,13 @@ func (c *Client) Connect(ctx context.Context) error {
 		return nil
 	}
 
+	// A certificate that fails verification fails the same way on every retry, so
+	// the first connection gives up at once instead of waiting forever. Once
+	// connected, reconnects keep retrying, so a running driver never exits over it.
+	if IsCertificateError(err) {
+		return fmt.Errorf("%w: %w", ErrCertificateVerification, err)
+	}
+
 	// Only retry on transient connection errors (e.g., TrueNAS unreachable during reboot).
 	// Authentication failures and other errors are returned immediately.
 	if !IsConnectionError(err) {
