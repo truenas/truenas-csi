@@ -28,9 +28,11 @@ const (
 	paramMultipathEnabled   = "iscsi.multipathEnabled"
 	paramPersistentSessions = "iscsi.persistentSessions"
 
-	// iSCSI connection settings
-	iscsiRetryCount    = 10 // number of login attempts
-	iscsiCheckInterval = 1  // seconds between retries
+	// How long csi-lib-iscsi waits for the device to appear once logged in:
+	// iscsiRetryCount checks, iscsiCheckInterval seconds apart. The login itself
+	// is bounded separately; see iscsiLoginTimeout.
+	iscsiRetryCount    = 10
+	iscsiCheckInterval = 1
 
 	// iscsiadmExitNoObjsFound is iscsiadm's ISCSI_ERR_NO_OBJS_FOUND: the record or
 	// session asked about does not exist.
@@ -196,6 +198,12 @@ func (h *ISCSIHandler) Stage(ctx context.Context, req *StageRequest) (*StageResu
 	}
 
 	if err := ensureIPv4Portal(config.TargetPortal); err != nil {
+		return nil, err
+	}
+
+	// Log in with time to finish, before csi-lib-iscsi's fixed 3-second limit
+	// applies; it then finds the session and only waits for the device.
+	if err := h.ensureISCSISession(ctx, config, iscsiLoginTimeout); err != nil {
 		return nil, err
 	}
 
