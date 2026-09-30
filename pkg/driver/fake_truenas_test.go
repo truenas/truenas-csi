@@ -118,6 +118,10 @@ func (f *fakeTrueNAS) handle(method string, params []any) (any, *client.RPCError
 		return nil, &client.RPCError{Code: -32001, Message: "injected failure for " + method}
 	}
 
+	if result, rpcErr, handled := f.handleSnapshot(method, params); handled {
+		return result, rpcErr
+	}
+
 	dot := strings.LastIndex(method, ".")
 	collection, op := method[:dot], method[dot+1:]
 	switch op {
@@ -176,14 +180,91 @@ func (f *fakeTrueNAS) handle(method string, params []any) (any, *client.RPCError
 	return nil, nil
 }
 
+// handleSnapshot gives snapshots the ZFS rules TrueNAS enforces: an immediate
+// delete of a snapshot that clones depend on is refused, a deferred one marks it,
+// and deleting its last clone destroys it.
+func (f *fakeTrueNAS) handleSnapshot(method string, params []any) (any, *client.RPCError, bool) {
+	switch method {
+	case "pool.snapshot.create":
+		opts, _ := params[0].(map[string]any)
+		snapshot := newFakeSnapshot(fmt.Sprint(opts["dataset"]), fmt.Sprint(opts["name"]))
+		f.records["pool.snapshot"] = append(f.records["pool.snapshot"], snapshot)
+		return snapshot, nil, true
+	case "pool.snapshot.clone":
+		opts, _ := params[0].(map[string]any)
+		dst := fmt.Sprint(opts["dataset_dst"])
+		f.records["pool.dataset"] = append(f.records["pool.dataset"], map[string]any{
+			"id": dst, "name": dst, "type": datasetTypeVolume, "origin": opts["snapshot"],
+		})
+		return true, nil, true
+	case "pool.snapshot.delete":
+		id := fmt.Sprint(params[0])
+		opts, _ := params[1].(map[string]any)
+		snapshot := f.find("pool.snapshot", id)
+		if snapshot == nil {
+			return nil, &client.RPCError{Code: -32001, Message: id + " does not exist"}, true
+		}
+		if clones := f.clonesOf(id); len(clones) > 0 {
+			if opts["defer"] != true {
+				return nil, &client.RPCError{Code: -32602, Message: fmt.Sprintf(
+					"[EINVAL] options.defer: Please set this attribute as '%s' snapshot has dependent clones: %s", id, strings.Join(clones, ","))}, true
+			}
+			snapshot["properties"] = map[string]any{"defer_destroy": map[string]any{"value": "on"}}
+			return true, nil, true
+		}
+		f.remove("pool.snapshot", id)
+		return true, nil, true
+	case "pool.dataset.delete":
+		id := fmt.Sprint(params[0])
+		f.remove("pool.dataset", id)
+		// ZFS destroys a deferred snapshot once its last clone is gone, and a
+		// dataset's own snapshots go with it.
+		// Runs under f.mu, so it copies the records rather than calling f.all.
+		for _, snapshot := range append([]map[string]any(nil), f.records["pool.snapshot"]...) {
+			pending := snapshot["properties"].(map[string]any)["defer_destroy"].(map[string]any)["value"] == "on"
+			if snapshot["dataset"] == id || (pending && len(f.clonesOf(fmt.Sprint(snapshot["id"]))) == 0) {
+				f.remove("pool.snapshot", snapshot["id"])
+			}
+		}
+		return true, nil, true
+	}
+	return nil, nil, false
+}
+
+func newFakeSnapshot(dataset, name string) map[string]any {
+	return map[string]any{
+		"id": dataset + "@" + name, "dataset": dataset, "name": dataset + "@" + name, "snapshot_name": name,
+		"properties": map[string]any{"defer_destroy": map[string]any{"value": "off"}},
+	}
+}
+
+// clonesOf returns the datasets cloned from snapshot.
+func (f *fakeTrueNAS) clonesOf(snapshot string) []string {
+	var clones []string
+	for _, ds := range f.records["pool.dataset"] {
+		if fmt.Sprint(ds["origin"]) == snapshot {
+			clones = append(clones, fmt.Sprint(ds["id"]))
+		}
+	}
+	return clones
+}
+
 func matches(record map[string]any, filters []any) bool {
 	for _, raw := range filters {
 		filter, _ := raw.([]any)
-		if len(filter) != 3 || filter[1] != "=" {
+		if len(filter) != 3 {
 			continue
 		}
-		if fmt.Sprint(record[filter[0].(string)]) != fmt.Sprint(filter[2]) {
-			return false
+		value, want := fmt.Sprint(record[filter[0].(string)]), fmt.Sprint(filter[2])
+		switch filter[1] {
+		case "=":
+			if value != want {
+				return false
+			}
+		case "^":
+			if !strings.HasPrefix(value, want) {
+				return false
+			}
 		}
 	}
 	return true

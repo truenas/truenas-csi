@@ -160,6 +160,11 @@ type ControllerServer struct {
 
 	// iscsiAuthMu serializes iSCSI auth tag allocation with the auth creation.
 	iscsiAuthMu sync.Mutex
+
+	// cloneSnapshotMu keeps the sweep of leftover clone snapshots from deleting one
+	// a clone in progress is about to use: clones hold it for reading, the sweep
+	// for writing.
+	cloneSnapshotMu sync.RWMutex
 }
 
 // withTimeout wraps a context with a timeout if it doesn't already have a deadline
@@ -1268,20 +1273,9 @@ func (s *ControllerServer) createVolumeFromSource(ctx context.Context, req *csi.
 			return nil, status.Errorf(codes.NotFound, "source volume not found: %v", err)
 		}
 
-		sanitizedVolumeID := strings.ReplaceAll(volumeID, "/", "-")
-		snapshotName := fmt.Sprintf("csi-clone-%s-%d", sanitizedVolumeID, time.Now().Unix())
-		snapshot, err := s.driver.Client().CreateSnapshot(ctx, sourceInfo.DatasetPath, snapshotName, false)
-		if err != nil {
-			return nil, status.Errorf(codes.Internal, "failed to create snapshot for clone: %v", err)
+		if err := s.cloneFromVolume(ctx, volumeID, sourceInfo.DatasetPath, datasetPath); err != nil {
+			return nil, err
 		}
-
-		_, err = s.driver.Client().CloneSnapshot(ctx, snapshot.ID, datasetPath)
-		if err != nil {
-			s.driver.Client().DeleteSnapshot(ctx, snapshot.ID)
-			return nil, status.Errorf(codes.Internal, "failed to clone volume: %v", err)
-		}
-
-		s.driver.Client().DeleteSnapshot(ctx, snapshot.ID)
 
 		requiredBytes := req.CapacityRange.RequiredBytes
 		if requiredBytes > 0 && requiredBytes < minVolumeSize {
@@ -1991,14 +1985,16 @@ func (s *ControllerServer) DeleteSnapshot(ctx context.Context, req *csi.DeleteSn
 		return &csi.DeleteSnapshotResponse{}, nil
 	}
 
+	// A volume restored from the snapshot may still depend on it. The delete is
+	// deferred, so ZFS destroys the snapshot once that volume is gone.
 	err := s.driver.Client().DeleteSnapshot(ctx, req.SnapshotId)
 	if err != nil {
 		if client.IsNotFoundError(err) {
 			return &csi.DeleteSnapshotResponse{}, nil
 		}
-		// For other errors, also return success for idempotency
-		s.driver.Log().V(LogLevelDebug).Info("Snapshot delete error, treating as already deleted", "snapshotId", req.SnapshotId, "error", err)
-		return &csi.DeleteSnapshotResponse{}, nil
+		// Reported rather than swallowed: the snapshot still exists, and the
+		// snapshotter retries a failed delete.
+		return nil, status.Errorf(codes.Internal, "failed to delete snapshot %s: %v", req.SnapshotId, err)
 	}
 
 	return &csi.DeleteSnapshotResponse{}, nil

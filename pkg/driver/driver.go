@@ -596,6 +596,12 @@ func (d *Driver) Run(ctx context.Context) error {
 	csi.RegisterControllerServer(d.server, d.controllerServer)
 	csi.RegisterNodeServer(d.server, d.nodeServer)
 
+	// Only the controller makes clone snapshots, so only it cleans up the ones
+	// earlier versions left. In the background, so volumes are served meanwhile.
+	if controller, ok := d.controllerServer.(*ControllerServer); ok {
+		go controller.sweepCloneSnapshots(ctx)
+	}
+
 	// Metrics are optional and must never keep the driver from serving volumes, so
 	// a listener that cannot be opened is reported and left behind.
 	if d.metricsAddr != "" {
