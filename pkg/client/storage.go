@@ -1157,10 +1157,13 @@ func (c *Client) CreateSnapshot(ctx context.Context, dataset, name string, recur
 	return &snapshot, nil
 }
 
-// DeleteSnapshot deletes a ZFS snapshot by name.
+// DeleteSnapshot deletes a ZFS snapshot by name. The destruction is deferred: a
+// snapshot with no clones is destroyed at once, and one that clones still depend
+// on is destroyed by ZFS when the last of them goes. ZFS refuses an immediate
+// destroy of such a snapshot, and a refused one would be left behind for good.
 func (c *Client) DeleteSnapshot(ctx context.Context, name string) error {
 	options := &SnapshotDeleteOptions{
-		Defer: false,
+		Defer: true,
 	}
 
 	err := c.Call(ctx, methodSnapshotDelete, []any{name, options}, nil)
@@ -1185,15 +1188,33 @@ func (c *Client) CloneSnapshot(ctx context.Context, snapshot, destination string
 	return c.GetDataset(ctx, destination)
 }
 
+// PendingDestroy reports whether the snapshot has been deleted and its destruction
+// deferred until its last clone goes. ZFS still has it, but it no longer exists as
+// far as anything asking for snapshots is concerned.
+func (s Snapshot) PendingDestroy() bool {
+	prop, _ := s.Properties["defer_destroy"].(map[string]any)
+	return prop["value"] == "on"
+}
+
+// querySnapshots returns the snapshots matching filters, leaving out those
+// pending destruction.
+func (c *Client) querySnapshots(ctx context.Context, filters [][]any) ([]Snapshot, error) {
+	var snapshots []Snapshot
+	if err := c.Call(ctx, methodSnapshotQuery, []any{filters, &QueryOptions{}}, &snapshots); err != nil {
+		return nil, err
+	}
+	live := snapshots[:0]
+	for _, s := range snapshots {
+		if !s.PendingDestroy() {
+			live = append(live, s)
+		}
+	}
+	return live, nil
+}
+
 // ListSnapshots returns all snapshots for a given dataset.
 func (c *Client) ListSnapshots(ctx context.Context, dataset string) ([]Snapshot, error) {
-	filters := [][]any{
-		{"dataset", "=", dataset},
-	}
-	options := &QueryOptions{}
-
-	var snapshots []Snapshot
-	err := c.Call(ctx, methodSnapshotQuery, []any{filters, options}, &snapshots)
+	snapshots, err := c.querySnapshots(ctx, [][]any{{"dataset", "=", dataset}})
 	if err != nil {
 		return nil, fmt.Errorf("failed to list snapshots: %w", err)
 	}
@@ -1205,13 +1226,7 @@ func (c *Client) ListSnapshots(ctx context.Context, dataset string) ([]Snapshot,
 // Returns the first matching snapshot or nil if not found.
 func (c *Client) FindSnapshotByName(ctx context.Context, name string) (*Snapshot, error) {
 	// Use snapshot_name filter to search by the name part
-	filters := [][]any{
-		{"snapshot_name", "=", name},
-	}
-	options := &QueryOptions{}
-
-	var snapshots []Snapshot
-	err := c.Call(ctx, methodSnapshotQuery, []any{filters, options}, &snapshots)
+	snapshots, err := c.querySnapshots(ctx, [][]any{{"snapshot_name", "=", name}})
 	if err != nil {
 		return nil, fmt.Errorf("failed to find snapshot by name: %w", err)
 	}
@@ -1222,14 +1237,20 @@ func (c *Client) FindSnapshotByName(ctx context.Context, name string) (*Snapshot
 	return &snapshots[0], nil
 }
 
+// ListSnapshotsByNamePrefix returns the snapshots, across all datasets, whose name
+// (the part after @) starts with prefix.
+func (c *Client) ListSnapshotsByNamePrefix(ctx context.Context, prefix string) ([]Snapshot, error) {
+	snapshots, err := c.querySnapshots(ctx, [][]any{{"snapshot_name", "^", prefix}})
+	if err != nil {
+		return nil, fmt.Errorf("failed to list snapshots named %s*: %w", prefix, err)
+	}
+	return snapshots, nil
+}
+
 // ListAllSnapshots returns all snapshots across all datasets.
 func (c *Client) ListAllSnapshots(ctx context.Context) ([]Snapshot, error) {
 	// Empty filter list means return all snapshots
-	filters := [][]any{}
-	options := &QueryOptions{}
-
-	var snapshots []Snapshot
-	err := c.Call(ctx, methodSnapshotQuery, []any{filters, options}, &snapshots)
+	snapshots, err := c.querySnapshots(ctx, [][]any{})
 	if err != nil {
 		return nil, fmt.Errorf("failed to list all snapshots: %w", err)
 	}

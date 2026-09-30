@@ -6,5 +6,7 @@ metadata:
   name: truenas-snapclass
 driver: csi.truenas.io
 deletionPolicy: Delete  # Delete snapshot when VolumeSnapshot is deleted
+# A volume restored from the snapshot keeps it on TrueNAS until that volume is
+# deleted too; see docs/snapshots.md.
 # Alternative: Retain - keep snapshot even after VolumeSnapshot deletion
 # deletionPolicy: Retain

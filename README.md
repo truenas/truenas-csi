@@ -9,7 +9,7 @@ A Container Storage Interface (CSI) driver for [TrueNAS 25.10.0+](https://www.tr
 - **NVMe-oF/TCP volumes** - Block storage over NVMe over Fabrics (TCP) with optional DH-CHAP authentication
 - **Dynamic provisioning** - Automatic volume creation and deletion
 - **Volume expansion** - Online resize of volumes
-- **Snapshots and clones** - CSI snapshot support for backup and cloning
+- **Snapshots and clones** - CSI snapshot support for backup and cloning ([docs](docs/snapshots.md))
 - **CHAP authentication** - Secure iSCSI connections
 - **ZFS compression** - LZ4, ZSTD, GZIP, and other algorithms
 - **ZFS encryption** - Dataset-level encryption with key management
