@@ -247,7 +247,10 @@ squashed. Requires the workload to set a pod `securityContext.fsGroup`. See
 > **CHAP:** each volume gets its own auth group on TrueNAS, which is removed with
 > the volume. The driver never turns on discovery authentication, and nodes log in
 > without SendTargets discovery, so discovery authentication configured on the
-> appliance (Shares > iSCSI > Authorized Access) does not affect volumes.
+> appliance (Shares > iSCSI > Authorized Access) does not affect volumes. Without
+> it, any initiator that can reach the portal can list the target names, though it
+> cannot log in to a target that requires CHAP. To stop that, turn discovery
+> authentication on there; it applies to every initiator using the appliance.
 
 #### NVMe-oF Parameters
 
