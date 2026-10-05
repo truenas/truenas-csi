@@ -25,7 +25,7 @@ source volume's dataset on TrueNAS, and they are freed when the clone goes.
 
 ## Leftovers from earlier versions
 
-Before v1.3.1 the driver deleted snapshots without deferring the destroy. ZFS
+Before v1.4.0 the driver deleted snapshots without deferring the destroy. ZFS
 refused whenever a clone depended on the snapshot, and the driver carried on, so
 two kinds of snapshot were left on the source volumes, holding space for as long as
 those volumes existed.
