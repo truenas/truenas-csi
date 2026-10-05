@@ -433,7 +433,7 @@ func NewDriver(config *DriverConfig) (*Driver, error) {
 			// No port specified, use the whole string as the host
 			portalHost = config.ISCSIPortal
 		}
-		portal, err := truenasClient.GetISCSIPortalByAddress(ctx, portalHost)
+		portal, err := truenasClient.GetISCSIPortalByAddress(ctx, portalAddresses(ctx, portalHost)...)
 		if err != nil {
 			log.V(LogLevelInfo).Info("Failed to resolve iSCSI portal ID, will retry on first use", "portal", config.ISCSIPortal, "error", err)
 		} else if portal != nil {
@@ -921,12 +921,13 @@ func (d *Driver) ISCSIPortalID(ctx context.Context) (int, error) {
 		portalHost = d.iscsiPortal
 	}
 
-	portal, err := d.client.GetISCSIPortalByAddress(ctx, portalHost)
+	addresses := portalAddresses(ctx, portalHost)
+	portal, err := d.client.GetISCSIPortalByAddress(ctx, addresses...)
 	if err != nil {
 		return 0, fmt.Errorf("failed to query iSCSI portals: %w", err)
 	}
 	if portal == nil {
-		return 0, fmt.Errorf("no iSCSI portal found matching address %q — create one in TrueNAS UI (Shares → iSCSI → Portals)", portalHost)
+		return 0, fmt.Errorf("no iSCSI portal listens on %s; create one in the TrueNAS UI (Shares > iSCSI > Portals)", strings.Join(addresses, ", "))
 	}
 
 	d.iscsiPortalID = portal.ID

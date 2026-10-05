@@ -3,6 +3,7 @@ package client
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 )
@@ -1105,9 +1106,9 @@ func (c *Client) QueryISCSIPortals(ctx context.Context) ([]ISCSIPortal, error) {
 	return portals, nil
 }
 
-// GetISCSIPortalByAddress finds the iSCSI portal whose listen addresses
-// contain the given IP. Returns nil if no matching portal is found.
-func (c *Client) GetISCSIPortalByAddress(ctx context.Context, address string) (*ISCSIPortal, error) {
+// GetISCSIPortalByAddress finds the iSCSI portal that listens on any of the given
+// addresses, or on all addresses. Returns nil if no matching portal is found.
+func (c *Client) GetISCSIPortalByAddress(ctx context.Context, addresses ...string) (*ISCSIPortal, error) {
 	portals, err := c.QueryISCSIPortals(ctx)
 	if err != nil {
 		return nil, err
@@ -1115,7 +1116,7 @@ func (c *Client) GetISCSIPortalByAddress(ctx context.Context, address string) (*
 
 	for i := range portals {
 		for _, listen := range portals[i].Listen {
-			if listen.IP == address || listen.IP == "0.0.0.0" {
+			if listen.IP == "0.0.0.0" || slices.Contains(addresses, listen.IP) {
 				return &portals[i], nil
 			}
 		}
