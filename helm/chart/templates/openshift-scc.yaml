@@ -1,0 +1,65 @@
+{{- if .Values.openshift.enabled }}
+---
+apiVersion: security.openshift.io/v1
+kind: SecurityContextConstraints
+metadata:
+  name: truenas-csi-node-scc
+  labels:
+    {{- include "truenas-csi.labels" . | nindent 4 }}
+    app.kubernetes.io/component: node
+allowPrivilegedContainer: true
+allowHostIPC: true
+allowHostNetwork: true
+allowHostPID: true
+allowHostPorts: true
+allowHostDirVolumePlugin: true
+allowedCapabilities:
+  - SYS_ADMIN
+runAsUser:
+  type: RunAsAny
+seLinuxContext:
+  type: MustRunAs
+fsGroup:
+  type: RunAsAny
+supplementalGroups:
+  type: RunAsAny
+volumes:
+  - configMap
+  - downwardAPI
+  - emptyDir
+  - hostPath
+  - persistentVolumeClaim
+  - projected
+  - secret
+users:
+  - system:serviceaccount:{{ include "truenas-csi.namespace" . }}:truenas-csi-node-sa
+---
+apiVersion: security.openshift.io/v1
+kind: SecurityContextConstraints
+metadata:
+  name: truenas-csi-controller-scc
+  labels:
+    {{- include "truenas-csi.labels" . | nindent 4 }}
+    app.kubernetes.io/component: controller
+allowPrivilegedContainer: false
+allowHostNetwork: false
+allowHostPID: false
+allowHostPorts: false
+allowHostDirVolumePlugin: false
+runAsUser:
+  type: RunAsAny
+seLinuxContext:
+  type: MustRunAs
+fsGroup:
+  type: RunAsAny
+supplementalGroups:
+  type: RunAsAny
+volumes:
+  - configMap
+  - downwardAPI
+  - emptyDir
+  - projected
+  - secret
+users:
+  - system:serviceaccount:{{ include "truenas-csi.namespace" . }}:truenas-csi-controller-sa
+{{- end }}

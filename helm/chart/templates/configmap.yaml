@@ -1,0 +1,21 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: truenas-csi-config
+  namespace: {{ include "truenas-csi.namespace" . }}
+  labels:
+    {{- include "truenas-csi.labels" . | nindent 4 }}
+data:
+  truenasURL: {{ .Values.truenas.url | quote }}
+  defaultPool: {{ .Values.truenas.defaultPool | quote }}
+  nfsServer: {{ .Values.truenas.nfsServer | quote }}
+  iscsiPortal: {{ .Values.truenas.iscsiPortal | quote }}
+  {{- if .Values.truenas.iscsiIQNBase }}
+  iscsiIQNBase: {{ .Values.truenas.iscsiIQNBase | quote }}
+  {{- end }}
+  {{- if .Values.truenas.nvmeofPortal }}
+  nvmeofPortal: {{ .Values.truenas.nvmeofPortal | quote }}
+  {{- end }}
+  {{- if .Values.truenas.insecureSkipVerify }}
+  truenasInsecure: {{ .Values.truenas.insecureSkipVerify | quote }}
+  {{- end }}

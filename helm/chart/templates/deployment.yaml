@@ -1,0 +1,170 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: truenas-csi-controller
+  namespace: {{ include "truenas-csi.namespace" . }}
+  labels:
+    {{- include "truenas-csi.labels" . | nindent 4 }}
+    app.kubernetes.io/component: controller
+spec:
+  replicas: {{ .Values.controller.replicas }}
+  selector:
+    matchLabels:
+      {{- include "truenas-csi.controllerSelectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "truenas-csi.labels" . | nindent 8 }}
+        app.kubernetes.io/component: controller
+    spec:
+      serviceAccountName: truenas-csi-controller-sa
+      {{- if .Values.controller.nodeSelector }}
+      nodeSelector:
+        {{- toYaml .Values.controller.nodeSelector | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: csi-controller
+          image: {{ include "truenas-csi.csiImage" . }}
+          imagePullPolicy: {{ .Values.images.csiDriver.pullPolicy }}
+          args:
+            - "--endpoint=$(CSI_ENDPOINT)"
+            - "--node-id=$(NODE_ID)"
+            - "--mode=controller"
+            - "--v=4"
+          env:
+            - name: CSI_ENDPOINT
+              value: unix:///csi/csi.sock
+            - name: CSI_DRIVER_NAME
+              value: {{ .Values.csiDriver.name | quote }}
+            - name: TRUENAS_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: truenas-csi-config
+                  key: truenasURL
+            - name: TRUENAS_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ required "apiSecret.name must be set to the name of your TrueNAS API key Secret" .Values.apiSecret.name | quote }}
+                  key: {{ .Values.apiSecret.key }}
+            - name: TRUENAS_DEFAULT_POOL
+              valueFrom:
+                configMapKeyRef:
+                  name: truenas-csi-config
+                  key: defaultPool
+            - name: TRUENAS_NFS_SERVER
+              valueFrom:
+                configMapKeyRef:
+                  name: truenas-csi-config
+                  key: nfsServer
+            - name: TRUENAS_ISCSI_PORTAL
+              valueFrom:
+                configMapKeyRef:
+                  name: truenas-csi-config
+                  key: iscsiPortal
+            - name: TRUENAS_ISCSI_IQN_BASE
+              valueFrom:
+                configMapKeyRef:
+                  name: truenas-csi-config
+                  key: iscsiIQNBase
+                  optional: true
+            - name: TRUENAS_NVMEOF_PORTAL
+              valueFrom:
+                configMapKeyRef:
+                  name: truenas-csi-config
+                  key: nvmeofPortal
+                  optional: true
+            - name: TRUENAS_INSECURE_SKIP_VERIFY
+              valueFrom:
+                configMapKeyRef:
+                  name: truenas-csi-config
+                  key: truenasInsecure
+                  optional: true
+            - name: NODE_ID
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+          volumeMounts:
+            - name: socket-dir
+              mountPath: /csi
+          resources:
+            {{- toYaml .Values.controller.resources | nindent 12 }}
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 9808
+            initialDelaySeconds: 10
+            timeoutSeconds: 3
+            periodSeconds: 10
+            failureThreshold: 5
+
+        - name: csi-provisioner
+          image: {{ .Values.images.provisioner.repository }}:{{ .Values.images.provisioner.tag }}
+          args:
+            - "--csi-address=$(ADDRESS)"
+            - "--v=5"
+            - "--feature-gates=Topology=true"
+            - "--extra-create-metadata"
+            - "--leader-election=true"
+            - "--default-fstype=ext4"
+            - "--timeout=60s"
+          env:
+            - name: ADDRESS
+              value: /csi/csi.sock
+          volumeMounts:
+            - name: socket-dir
+              mountPath: /csi
+
+        - name: csi-attacher
+          image: {{ .Values.images.attacher.repository }}:{{ .Values.images.attacher.tag }}
+          args:
+            - "--csi-address=$(ADDRESS)"
+            - "--v=5"
+            - "--leader-election=true"
+            - "--timeout=60s"
+          env:
+            - name: ADDRESS
+              value: /csi/csi.sock
+          volumeMounts:
+            - name: socket-dir
+              mountPath: /csi
+
+        - name: csi-snapshotter
+          image: {{ .Values.images.snapshotter.repository }}:{{ .Values.images.snapshotter.tag }}
+          args:
+            - "--csi-address=$(ADDRESS)"
+            - "--v=5"
+            - "--leader-election=true"
+            - "--timeout=60s"
+          env:
+            - name: ADDRESS
+              value: /csi/csi.sock
+          volumeMounts:
+            - name: socket-dir
+              mountPath: /csi
+
+        - name: csi-resizer
+          image: {{ .Values.images.resizer.repository }}:{{ .Values.images.resizer.tag }}
+          args:
+            - "--csi-address=$(ADDRESS)"
+            - "--v=5"
+            - "--leader-election=true"
+            - "--timeout=60s"
+          env:
+            - name: ADDRESS
+              value: /csi/csi.sock
+          volumeMounts:
+            - name: socket-dir
+              mountPath: /csi
+
+        - name: liveness-probe
+          image: {{ .Values.images.livenessProbe.repository }}:{{ .Values.images.livenessProbe.tag }}
+          args:
+            - "--csi-address=/csi/csi.sock"
+            - "--health-port=9808"
+          volumeMounts:
+            - name: socket-dir
+              mountPath: /csi
+
+      volumes:
+        - name: socket-dir
+          emptyDir: {}

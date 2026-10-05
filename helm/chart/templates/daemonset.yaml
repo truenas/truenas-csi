@@ -1,0 +1,185 @@
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: truenas-csi-node
+  namespace: {{ include "truenas-csi.namespace" . }}
+  labels:
+    {{- include "truenas-csi.labels" . | nindent 4 }}
+    app.kubernetes.io/component: node
+spec:
+  selector:
+    matchLabels:
+      {{- include "truenas-csi.nodeSelectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "truenas-csi.labels" . | nindent 8 }}
+        app.kubernetes.io/component: node
+    spec:
+      serviceAccountName: truenas-csi-node-sa
+      hostNetwork: true
+      hostPID: true
+      hostIPC: true
+      priorityClassName: system-node-critical
+      {{- if .Values.node.nodeSelector }}
+      nodeSelector:
+        {{- toYaml .Values.node.nodeSelector | nindent 8 }}
+      {{- end }}
+      tolerations:
+        - operator: Exists
+      containers:
+        - name: csi-node
+          image: {{ include "truenas-csi.csiImage" . }}
+          imagePullPolicy: {{ .Values.images.csiDriver.pullPolicy }}
+          lifecycle:
+            postStart:
+              exec:
+                command: ["/bin/sh", "-c", "mkdir -p /run/lock/iscsi && mv /usr/sbin/iscsiadm /usr/sbin/iscsiadm.orig 2>/dev/null; printf '#!/bin/sh\\nnsenter --mount=/host/proc/1/ns/mnt -- /usr/sbin/iscsiadm \"$@\"\\n' > /usr/sbin/iscsiadm && chmod +x /usr/sbin/iscsiadm; modprobe nvme_tcp 2>/dev/null; modprobe nvme_fabrics 2>/dev/null"]
+          securityContext:
+            privileged: true
+          args:
+            - "--endpoint=$(CSI_ENDPOINT)"
+            - "--node-id=$(NODE_ID)"
+            - "--mode=node"
+            - "--v=4"
+          env:
+            - name: CSI_ENDPOINT
+              value: unix:///csi/csi.sock
+            - name: CSI_DRIVER_NAME
+              value: {{ .Values.csiDriver.name | quote }}
+            - name: TRUENAS_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: truenas-csi-config
+                  key: truenasURL
+            - name: TRUENAS_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ required "apiSecret.name must be set to the name of your TrueNAS API key Secret" .Values.apiSecret.name | quote }}
+                  key: {{ .Values.apiSecret.key }}
+            - name: TRUENAS_DEFAULT_POOL
+              valueFrom:
+                configMapKeyRef:
+                  name: truenas-csi-config
+                  key: defaultPool
+            - name: TRUENAS_NFS_SERVER
+              valueFrom:
+                configMapKeyRef:
+                  name: truenas-csi-config
+                  key: nfsServer
+            - name: TRUENAS_ISCSI_PORTAL
+              valueFrom:
+                configMapKeyRef:
+                  name: truenas-csi-config
+                  key: iscsiPortal
+            - name: TRUENAS_ISCSI_IQN_BASE
+              valueFrom:
+                configMapKeyRef:
+                  name: truenas-csi-config
+                  key: iscsiIQNBase
+                  optional: true
+            - name: TRUENAS_NVMEOF_PORTAL
+              valueFrom:
+                configMapKeyRef:
+                  name: truenas-csi-config
+                  key: nvmeofPortal
+                  optional: true
+            - name: TRUENAS_INSECURE_SKIP_VERIFY
+              valueFrom:
+                configMapKeyRef:
+                  name: truenas-csi-config
+                  key: truenasInsecure
+                  optional: true
+            - name: NODE_ID
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+          volumeMounts:
+            - name: plugin-dir
+              mountPath: /csi
+            - name: kubelet-dir
+              mountPath: /var/lib/kubelet
+              mountPropagation: Bidirectional
+            - name: device-dir
+              mountPath: /dev
+            - name: modules-dir
+              mountPath: /lib/modules
+              readOnly: true
+            - name: iscsi-dir
+              mountPath: /etc/iscsi
+              mountPropagation: Bidirectional
+            - name: iscsi-lib
+              mountPath: /var/lib/iscsi
+              mountPropagation: Bidirectional
+            - name: host-root
+              mountPath: /host
+              mountPropagation: Bidirectional
+          resources:
+            {{- toYaml .Values.node.resources | nindent 12 }}
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 9808
+            initialDelaySeconds: 10
+            timeoutSeconds: 3
+            periodSeconds: 10
+            failureThreshold: 5
+
+        - name: csi-node-driver-registrar
+          image: {{ .Values.images.nodeDriverRegistrar.repository }}:{{ .Values.images.nodeDriverRegistrar.tag }}
+          args:
+            - "--csi-address=$(ADDRESS)"
+            - "--kubelet-registration-path=$(DRIVER_REG_SOCK_PATH)"
+            - "--v=5"
+          env:
+            - name: ADDRESS
+              value: /csi/csi.sock
+            - name: DRIVER_REG_SOCK_PATH
+              value: /var/lib/kubelet/plugins/{{ .Values.csiDriver.name }}/csi.sock
+          volumeMounts:
+            - name: plugin-dir
+              mountPath: /csi
+            - name: registration-dir
+              mountPath: /registration
+
+        - name: liveness-probe
+          image: {{ .Values.images.livenessProbe.repository }}:{{ .Values.images.livenessProbe.tag }}
+          args:
+            - "--csi-address=/csi/csi.sock"
+            - "--health-port=9808"
+          volumeMounts:
+            - name: plugin-dir
+              mountPath: /csi
+
+      volumes:
+        - name: registration-dir
+          hostPath:
+            path: /var/lib/kubelet/plugins_registry/
+            type: DirectoryOrCreate
+        - name: plugin-dir
+          hostPath:
+            path: /var/lib/kubelet/plugins/{{ .Values.csiDriver.name }}/
+            type: DirectoryOrCreate
+        - name: kubelet-dir
+          hostPath:
+            path: /var/lib/kubelet
+            type: Directory
+        - name: device-dir
+          hostPath:
+            path: /dev
+        - name: modules-dir
+          hostPath:
+            path: {{ .Values.node.modulesPath | default "/lib/modules" }}
+            type: Directory
+        - name: iscsi-dir
+          hostPath:
+            path: /etc/iscsi
+            type: Directory
+        - name: iscsi-lib
+          hostPath:
+            path: /var/lib/iscsi
+            type: DirectoryOrCreate
+        - name: host-root
+          hostPath:
+            path: /
+            type: Directory

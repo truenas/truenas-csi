@@ -1,0 +1,55 @@
+{{- if .Values.openshift.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: truenas-csi-capabilities
+  namespace: {{ include "truenas-csi.namespace" . }}
+  labels:
+    {{- include "truenas-csi.labels" . | nindent 4 }}
+    app.kubernetes.io/component: certification
+data:
+  driver-name: {{ .Values.csiDriver.name | quote }}
+  driver-version: {{ .Chart.AppVersion | quote }}
+  csi-version: "1.8.0"
+  protocols: |
+    - nfs
+    - iscsi
+  controller-capabilities: |
+    - CREATE_DELETE_VOLUME
+    - CREATE_DELETE_SNAPSHOT
+    - CLONE_VOLUME
+    - EXPAND_VOLUME
+    - LIST_VOLUMES
+    - GET_CAPACITY
+  node-capabilities: |
+    - STAGE_UNSTAGE_VOLUME
+    - GET_VOLUME_STATS
+    - EXPAND_VOLUME
+  volume-capabilities: |
+    - accessModes:
+        - ReadWriteOnce
+        - ReadOnlyMany
+        - ReadWriteMany
+      fsTypes:
+        - nfs
+        - nfs4
+    - accessModes:
+        - ReadWriteOnce
+        - ReadOnlyMany
+      fsTypes:
+        - ext4
+        - xfs
+      blockVolume: true
+  snapshot-capabilities: |
+    - CREATE_DELETE_SNAPSHOT
+  features: |
+    - dynamic-provisioning
+    - volume-expansion
+    - volume-snapshots
+    - volume-cloning
+    - raw-block-volumes
+    - fsgroup-policy
+  unsupported-features: |
+    - volume-topology
+    - volume-health-monitoring
+{{- end }}
