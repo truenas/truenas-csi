@@ -4,8 +4,36 @@ entries:
   - annotations:
       artifacthub.io/license: Apache-2.0
     apiVersion: v2
+    appVersion: 1.4.0
+    created: "2026-10-05T14:32:05.192945833-04:00"
+    description: CSI driver for TrueNAS SCALE, providing NFS, iSCSI and NVMe-oF/TCP
+      persistent volumes
+    digest: 3a1b9f326447d54beb3fec20e3b026a4a07f68cb7f3685c7a71f7e9d70589367
+    home: https://github.com/truenas/truenas-csi
+    keywords:
+    - csi
+    - storage
+    - truenas
+    - zfs
+    - nfs
+    - iscsi
+    - nvme-of
+    kubeVersion: '>=1.20.0-0'
+    maintainers:
+    - name: TrueNAS
+      url: https://github.com/truenas/truenas-csi
+    name: truenas-csi
+    sources:
+    - https://github.com/truenas/truenas-csi
+    type: application
+    urls:
+    - https://raw.githubusercontent.com/truenas/truenas-csi/master/charts/truenas-csi-1.4.0.tgz
+    version: 1.4.0
+  - annotations:
+      artifacthub.io/license: Apache-2.0
+    apiVersion: v2
     appVersion: 1.3.0
-    created: "2026-09-04T14:52:00.175794537-04:00"
+    created: "2026-10-05T14:32:05.192379957-04:00"
     description: CSI driver for TrueNAS SCALE, providing NFS, iSCSI and NVMe-oF/TCP
       persistent volumes
     digest: 8d8bf0f0831896f5b5a3f29b25f056c268a1b21154b80b7cb638f7c1e387d7c0
@@ -29,4 +57,4 @@ entries:
     urls:
     - https://raw.githubusercontent.com/truenas/truenas-csi/master/charts/truenas-csi-1.3.0.tgz
     version: 1.3.0
-generated: "2026-09-04T14:52:00.173590084-04:00"
+generated: "2026-10-05T14:32:05.191123252-04:00"
