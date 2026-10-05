@@ -156,6 +156,35 @@ spec:
         path: truenasURL
         x-descriptors:
         - urn:alm:descriptor:com.tectonic.ui:text
+      - description: |-
+          TrustedCA names a ConfigMap in the driver namespace holding PEM CA certificates
+          to trust for the TrueNAS API, in addition to the image's public CAs. Use it when
+          the TrueNAS certificate is issued by a private CA. On OpenShift, a ConfigMap
+          labeled config.openshift.io/inject-trusted-cabundle=true is filled with the
+          cluster's trusted CA bundle under the key ca-bundle.crt.
+        displayName: Trusted CA
+        path: trustedCA
+      - description: Key holding the PEM certificates
+        displayName: Key
+        path: trustedCA.key
+        x-descriptors:
+        - urn:alm:descriptor:com.tectonic.ui:text
+      - description: Name of the ConfigMap
+        displayName: ConfigMap
+        path: trustedCA.name
+        x-descriptors:
+        - urn:alm:descriptor:io.kubernetes:ConfigMap
+      - description: |-
+          UseClusterProxy passes the operator's own HTTP_PROXY, HTTPS_PROXY and NO_PROXY
+          to the CSI driver, for reaching the TrueNAS API through an outbound proxy. On
+          OpenShift, OLM sets them on the operator from the cluster-wide Proxy. Leave it
+          off when TrueNAS is reachable directly; with it on, list the TrueNAS host in
+          the cluster's noProxy to keep reaching it directly. Storage traffic never goes
+          through the proxy.
+        displayName: Use Cluster Proxy
+        path: useClusterProxy
+        x-descriptors:
+        - urn:alm:descriptor:com.tectonic.ui:booleanSwitch
       statusDescriptors:
       - description: Conditions represent the latest available observations of the
           TrueNASCSI's state

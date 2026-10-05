@@ -22,15 +22,15 @@ metadata:
       ]
     capabilities: Full Lifecycle
     categories: Storage
-    containerImage: quay.io/truenas_solutions/truenas-csi-operator@sha256:4873107cd6e48b1c044fb6a708ee5525987ead9155a698709d100c6e570a5057
-    createdAt: "2026-09-04T19:03:31Z"
+    containerImage: quay.io/truenas_solutions/truenas-csi-operator@sha256:c6fda521ff1d8b15b368173ec1b4a3206f4c1e0da2801242ca4ab59dcd4b5548
+    createdAt: "2026-10-05T18:39:09Z"
     description: Deploys and manages the TrueNAS CSI driver for dynamic volume provisioning
     features.operators.openshift.io/cnf: "false"
     features.operators.openshift.io/cni: "false"
     features.operators.openshift.io/csi: "true"
     features.operators.openshift.io/disconnected: "false"
     features.operators.openshift.io/fips-compliant: "false"
-    features.operators.openshift.io/proxy-aware: "false"
+    features.operators.openshift.io/proxy-aware: "true"
     features.operators.openshift.io/tls-profiles: "false"
     features.operators.openshift.io/token-auth-aws: "false"
     features.operators.openshift.io/token-auth-azure: "false"
@@ -39,7 +39,7 @@ metadata:
     operators.operatorframework.io/project_layout: go.kubebuilder.io/v4
     repository: https://github.com/truenas/truenas-csi
     support: TrueNAS
-  name: truenas-csi.v1.3.0
+  name: truenas-csi.v1.4.0
   namespace: placeholder
 spec:
   apiservicedefinitions: {}
@@ -159,6 +159,35 @@ spec:
             path: truenasURL
             x-descriptors:
               - urn:alm:descriptor:com.tectonic.ui:text
+          - description: |-
+              TrustedCA names a ConfigMap in the driver namespace holding PEM CA certificates
+              to trust for the TrueNAS API, in addition to the image's public CAs. Use it when
+              the TrueNAS certificate is issued by a private CA. On OpenShift, a ConfigMap
+              labeled config.openshift.io/inject-trusted-cabundle=true is filled with the
+              cluster's trusted CA bundle under the key ca-bundle.crt.
+            displayName: Trusted CA
+            path: trustedCA
+          - description: Key holding the PEM certificates
+            displayName: Key
+            path: trustedCA.key
+            x-descriptors:
+              - urn:alm:descriptor:com.tectonic.ui:text
+          - description: Name of the ConfigMap
+            displayName: ConfigMap
+            path: trustedCA.name
+            x-descriptors:
+              - urn:alm:descriptor:io.kubernetes:ConfigMap
+          - description: |-
+              UseClusterProxy passes the operator's own HTTP_PROXY, HTTPS_PROXY and NO_PROXY
+              to the CSI driver, for reaching the TrueNAS API through an outbound proxy. On
+              OpenShift, OLM sets them on the operator from the cluster-wide Proxy. Leave it
+              off when TrueNAS is reachable directly; with it on, list the TrueNAS host in
+              the cluster's noProxy to keep reaching it directly. Storage traffic never goes
+              through the proxy.
+            displayName: Use Cluster Proxy
+            path: useClusterProxy
+            x-descriptors:
+              - urn:alm:descriptor:com.tectonic.ui:booleanSwitch
         statusDescriptors:
           - description: Conditions represent the latest available observations of the TrueNASCSI's state
             displayName: Conditions
@@ -543,8 +572,8 @@ spec:
                       - name: LIVENESS_PROBE_IMAGE
                         value: registry.k8s.io/sig-storage/livenessprobe@sha256:7fe80915b3cb9fb1d09dbd300a0682cafa8ab93947cd3ddc3e15a8250621bf24
                       - name: DRIVER_IMAGE
-                        value: quay.io/truenas_solutions/truenas-csi@sha256:473ed40fdf1cfa3e1f22c83f48cd3f73645bf26a34e2aff97f07cb8fe1d6a7a9
-                    image: quay.io/truenas_solutions/truenas-csi-operator@sha256:4873107cd6e48b1c044fb6a708ee5525987ead9155a698709d100c6e570a5057
+                        value: quay.io/truenas_solutions/truenas-csi@sha256:fb669f220d1eea7c04f34757d2f3f414a702f4ae111c82bb65fa9e3280d33819
+                    image: quay.io/truenas_solutions/truenas-csi-operator@sha256:c6fda521ff1d8b15b368173ec1b4a3206f4c1e0da2801242ca4ab59dcd4b5548
                     livenessProbe:
                       httpGet:
                         path: /healthz
@@ -645,9 +674,9 @@ spec:
     name: TrueNAS
     url: https://www.truenas.com
   relatedImages:
-    - image: quay.io/truenas_solutions/truenas-csi-operator@sha256:4873107cd6e48b1c044fb6a708ee5525987ead9155a698709d100c6e570a5057
+    - image: quay.io/truenas_solutions/truenas-csi-operator@sha256:c6fda521ff1d8b15b368173ec1b4a3206f4c1e0da2801242ca4ab59dcd4b5548
       name: truenas-csi-operator
-    - image: quay.io/truenas_solutions/truenas-csi@sha256:473ed40fdf1cfa3e1f22c83f48cd3f73645bf26a34e2aff97f07cb8fe1d6a7a9
+    - image: quay.io/truenas_solutions/truenas-csi@sha256:fb669f220d1eea7c04f34757d2f3f414a702f4ae111c82bb65fa9e3280d33819
       name: truenas-csi
     - image: registry.k8s.io/sig-storage/csi-attacher@sha256:4f6b1289ffe62dbe3d2317dd938cd9dd3fb0a7c0088d505cde4effa1e0771dc2
       name: csi-attacher
@@ -661,5 +690,5 @@ spec:
       name: csi-snapshotter
     - image: registry.k8s.io/sig-storage/livenessprobe@sha256:7fe80915b3cb9fb1d09dbd300a0682cafa8ab93947cd3ddc3e15a8250621bf24
       name: livenessprobe
-  version: 1.3.0
-  replaces: truenas-csi.v1.2.0
+  version: 1.4.0
+  replaces: truenas-csi.v1.3.0
