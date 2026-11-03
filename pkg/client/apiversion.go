@@ -126,5 +126,14 @@ func (c *Client) verifyAndPinAPIVersion(ctx context.Context) error {
 	c.log.V(logLevelInfo).Info("Verified TrueNAS meets the minimum API version; connecting to /api/current",
 		"minVersion", MinAPIVersion, "supported", supported)
 	c.config.URL = resolved
+	c.supportedVersions = supported
 	return nil
+}
+
+// HasAPIVersion reports whether the server advertised API version v (e.g. "v27.0.0")
+// at preflight. A server lists its own version and the older ones it still serves,
+// so this doubles as a "server is at least v" check. Returns false when the
+// preflight fetch failed.
+func (c *Client) HasAPIVersion(v string) bool {
+	return versionSupported(c.supportedVersions, v)
 }
