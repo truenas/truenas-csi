@@ -242,6 +242,10 @@ type Client struct {
 	// apiVersionPinned ensures the API version is resolved/verified only once.
 	apiVersionPinned atomic.Bool
 
+	// supportedVersions is the list /api/versions advertised at preflight, e.g.
+	// ["v25.10.0","v27.0.0"]. Nil when the preflight fetch failed.
+	supportedVersions []string
+
 	// Concurrency limiter for WebSocket calls
 	callSem *semaphore.Weighted
 }

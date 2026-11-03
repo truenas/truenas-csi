@@ -139,3 +139,17 @@ func TestVerifyAndPinAPIVersion(t *testing.T) {
 		}
 	})
 }
+
+func TestHasAPIVersion(t *testing.T) {
+	c := &Client{}
+	if c.HasAPIVersion("v25.10.0") {
+		t.Error("expected false before preflight")
+	}
+	c.supportedVersions = []string{"v25.10.0", "v27.0.0"}
+	if !c.HasAPIVersion("v27.0.0") {
+		t.Error("expected v27.0.0 to be reported")
+	}
+	if c.HasAPIVersion("v28.0.0") {
+		t.Error("did not expect v28.0.0 to be reported")
+	}
+}
