@@ -78,7 +78,8 @@ const (
 
 // TrueNAS API method names for ZFS resources
 const (
-	methodZFSResourceQuery = "zfs.resource.query"
+	methodZFSResourceQuery = "zfs.resource.query" // private from API v28 on
+	methodZFSResourceList  = "zfs.resource.list"  // the same call, renamed in v28
 )
 
 // Default iSCSI port
@@ -1368,8 +1369,13 @@ func (c *Client) GetAvailableSpace(ctx context.Context, poolName string) (int64,
 		GetSource:  false,
 	}
 
+	method := methodZFSResourceQuery
+	if c.HasAPIVersion("v28.0.0") {
+		method = methodZFSResourceList
+	}
+
 	var resources []ZFSResource
-	err := c.Call(ctx, methodZFSResourceQuery, []any{options}, &resources)
+	err := c.Call(ctx, method, []any{options}, &resources)
 	if err != nil {
 		return 0, fmt.Errorf("failed to query ZFS resource %s: %w", poolName, err)
 	}
