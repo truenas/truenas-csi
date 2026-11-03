@@ -1154,6 +1154,28 @@ func TestGetAvailableSpace_Success(t *testing.T) {
 	assertEqual(t, space, int64(500000000000))
 }
 
+// On a v28 server zfs.resource.query is private, so the client must send the
+// renamed zfs.resource.list instead. Only the new name is registered with the
+// mock, so sending the old one fails the test.
+func TestGetAvailableSpace_V28UsesList(t *testing.T) {
+	mock := NewMockTrueNASServer()
+	defer mock.Close()
+
+	mock.SetResponse(methodZFSResourceList, MockResponse{
+		Result: []ZFSResource{
+			MockZFSResource("tank", 500000000000),
+		},
+	})
+
+	client := connectTestClient(t, mock)
+	client.supportedVersions = []string{MinAPIVersion, "v28.0.0"}
+
+	space, err := client.GetAvailableSpace(testContext(t), "tank")
+
+	assertNoError(t, err)
+	assertEqual(t, space, int64(500000000000))
+}
+
 func TestGetAvailableSpace_NotFound(t *testing.T) {
 	mock := NewMockTrueNASServer()
 	defer mock.Close()
