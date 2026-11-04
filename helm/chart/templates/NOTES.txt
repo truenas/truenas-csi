@@ -1,0 +1,34 @@
+TrueNAS CSI Driver {{ .Chart.AppVersion }} installed in namespace {{ include "truenas-csi.namespace" . }}.
+
+PREREQUISITES
+  A Secret containing your TrueNAS API key must exist before the pods start.
+  If you have not created it yet:
+
+    kubectl -n {{ include "truenas-csi.namespace" . }} create secret generic {{ .Values.apiSecret.name | default "<secret-name>" }} \
+      --from-literal={{ .Values.apiSecret.key }}=<your-api-key>
+
+  Set apiSecret.name (and apiSecret.key if you used a different key name) in
+  your values file.
+
+CONFIGURATION
+  The driver reads its endpoint from truenas.url (WebSocket URL):
+
+    truenas.url: "wss://<truenas-ip>"
+
+  For self-signed certificates set truenas.insecureSkipVerify: "true".
+
+STORAGECLASSES
+  Create StorageClass resources referencing provisioner: {{ .Values.csiDriver.name }}
+  before provisioning volumes. See the examples/ directory in the repository
+  for NFS, iSCSI, encrypted, and snapshot StorageClass samples.
+
+OPENSHIFT
+  If running on OpenShift, reinstall with:
+
+    helm upgrade --install truenas-csi ./helm/chart \
+      --namespace truenas-csi --create-namespace \
+      --set openshift.enabled=true \
+      [other values...]
+
+  This adds the SecurityContextConstraints required for privileged CSI
+  mount operations on OpenShift clusters.

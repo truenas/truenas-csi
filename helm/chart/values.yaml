@@ -1,0 +1,75 @@
+truenas:
+  url: ""
+  defaultPool: ""
+  nfsServer: ""
+  iscsiPortal: ""
+  iscsiIQNBase: ""
+  insecureSkipVerify: ""
+  # Optional: NVMe-oF portal (host:port, e.g. "YOUR-TRUENAS-IP:4420").
+  # Auto-derived from the truenasURL host if left empty.
+  nvmeofPortal: ""
+
+# Reference to a pre-existing Secret containing the TrueNAS API key.
+# Create it before installing:
+#   kubectl -n <namespace> create secret generic <name> --from-literal=<key>=<api-key>
+apiSecret:
+  name: ""
+  key: password
+
+images:
+  csiDriver:
+    repository: ghcr.io/truenas/truenas-csi
+    tag: ""  # defaults to Chart.AppVersion when empty
+    pullPolicy: IfNotPresent
+  provisioner:
+    repository: registry.k8s.io/sig-storage/csi-provisioner
+    tag: v6.1.1
+  attacher:
+    repository: registry.k8s.io/sig-storage/csi-attacher
+    tag: v4.11.0
+  snapshotter:
+    repository: registry.k8s.io/sig-storage/csi-snapshotter
+    tag: v8.5.0
+  resizer:
+    repository: registry.k8s.io/sig-storage/csi-resizer
+    tag: v2.1.0
+  nodeDriverRegistrar:
+    repository: registry.k8s.io/sig-storage/csi-node-driver-registrar
+    tag: v2.16.0
+  livenessProbe:
+    repository: registry.k8s.io/sig-storage/livenessprobe
+    tag: v2.18.0
+
+controller:
+  replicas: 1
+  nodeSelector: {}
+  resources:
+    requests:
+      memory: "128Mi"
+      cpu: "100m"
+    limits:
+      memory: "256Mi"
+      cpu: "200m"
+
+node:
+  nodeSelector: {}
+  # Host path to kernel modules, mounted read-only so the node plugin can
+  # modprobe iscsi_tcp etc. Override for distros that don't use /lib/modules
+  # (e.g. NixOS: /run/booted-system/kernel-modules/lib/modules).
+  modulesPath: /lib/modules
+  resources:
+    requests:
+      memory: "128Mi"
+      cpu: "100m"
+    limits:
+      memory: "256Mi"
+      cpu: "200m"
+
+csiDriver:
+  name: csi.truenas.io
+  attachRequired: true
+  podInfoOnMount: true
+  fsGroupPolicy: File
+
+openshift:
+  enabled: false

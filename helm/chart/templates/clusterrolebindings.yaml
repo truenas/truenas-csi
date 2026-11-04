@@ -1,0 +1,29 @@
+kind: ClusterRoleBinding
+apiVersion: rbac.authorization.k8s.io/v1
+metadata:
+  name: truenas-csi-controller-binding
+  labels:
+    {{- include "truenas-csi.labels" . | nindent 4 }}
+subjects:
+  - kind: ServiceAccount
+    name: truenas-csi-controller-sa
+    namespace: {{ include "truenas-csi.namespace" . }}
+roleRef:
+  kind: ClusterRole
+  name: truenas-csi-controller-role
+  apiGroup: rbac.authorization.k8s.io
+---
+kind: ClusterRoleBinding
+apiVersion: rbac.authorization.k8s.io/v1
+metadata:
+  name: truenas-csi-node-binding
+  labels:
+    {{- include "truenas-csi.labels" . | nindent 4 }}
+subjects:
+  - kind: ServiceAccount
+    name: truenas-csi-node-sa
+    namespace: {{ include "truenas-csi.namespace" . }}
+roleRef:
+  kind: ClusterRole
+  name: truenas-csi-node-role
+  apiGroup: rbac.authorization.k8s.io
